@@ -1,0 +1,28 @@
+[project]
+name = "tacit-plane"
+version = "0.1.0"
+description = "Two-person Slack communication with local agents"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.30,<1",
+  "httpx>=0.27,<1",
+  "slack-bolt>=1.20,<2",
+  "python-dotenv>=1,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+
+[project.scripts]
+tacit = "tacit.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tacit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
