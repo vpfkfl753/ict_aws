@@ -2,6 +2,8 @@
 
 확인일: 2026-09-15. Slack 및 Agent Plane 구현 담당자가 호출하는 로컬 Python 연결 모듈이다.
 
+통합 후 `tacit worker`와 `tacit doctor --probe`에서도 `TACIT_BACKEND=kiro|opencode`로 선택할 수 있다. 기본값 `codex`는 기존 직접 CLI 경로를 사용한다. 워커 연결 코드는 `tacit/provider.py`에 있으며, 각 exchange의 요청마다 새 ACP 세션을 연다.
+
 ```text
 Slack / Agent Plane
        │
@@ -26,7 +28,7 @@ Slack / Agent Plane
 | Kiro ACP 실제 모델 응답 | 미검증; 대회 계정 로그인 필요 |
 | 프로토콜/오류/종료 테스트 | 가짜 ACP 프로세스를 사용한 8개 테스트 통과 |
 
-현재 구독 기반 모델 호출 성공이나 Slack 통합 완료를 의미하지 않는다.
+현재 Kiro/OpenCode 구독 기반 모델 호출 성공이나 실제 Slack 연결 완료를 의미하지 않는다. 워커와의 코드 연결 및 혼합 실행기 모의 흐름 테스트는 완료했다.
 기존 Codex 로그인 정보는 복사하거나 변경하지 않았다. 전역 실행파일과 셸 설정도 변경하지 않았다.
 
 ## 1. 각 구독으로 로그인
@@ -88,6 +90,7 @@ stdout은 `backend`, `session_id`, `text`, `stop_reason`을 갖는 JSON이다.
 
 ```python
 from tacit_runtime import AgentRuntime
+
 
 async def explain(context: str, backend: str, workspace: str):
     model = "openai/gpt-5.6-sol" if backend == "opencode" else None

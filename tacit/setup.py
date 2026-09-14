@@ -67,6 +67,7 @@ def main():
                 "TACIT_OWNER": owner,
                 "TACIT_AGENT_TOKEN": token,
                 "TACIT_WORKSPACE": root,
+                "TACIT_BACKEND": "codex",
                 "TACIT_STATE_DIR": f".tacit/{owner}",
                 "SLACK_USER_TOKEN": "",
             },

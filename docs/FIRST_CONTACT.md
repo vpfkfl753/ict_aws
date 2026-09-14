@@ -26,13 +26,13 @@
 
 ## 2. Agent 호출 확인
 
-각 머신에 Codex CLI를 설치하고 각자의 계정으로 `codex login`을 완료한다. 설정의 `TACIT_WORKSPACE`를 해당 머신에 실제 존재하는 폴더로 바꾼다.
+각 머신에 선택한 실행기를 설치하고 자신의 계정으로 로그인한다. 기본값은 Codex이며 `codex login`을 사용한다. 대회 Kiro 구독은 `TACIT_BACKEND=kiro`, ChatGPT 구독의 OpenCode 연결은 `TACIT_BACKEND=opencode`로 선택한다. OpenCode에는 `TACIT_MODEL=openai/<model>`도 설정한다. 자세한 로그인 방법은 [실행기 가이드](../tacit_runtime/README.md)를 따른다. 설정의 `TACIT_WORKSPACE`를 해당 머신에 실제 존재하는 폴더로 바꾼다.
 
 ```bash
 uv run tacit --env-file .tacit/setup/owner.env doctor --probe
 ```
 
-성원은 `peer.env`를 사용한다. `--probe`는 실행기가 지정 폴더의 텍스트를 수집하고 실제 모델이 그 파일 근거로 응답하는지 확인한다. Slack 메시지는 보내지 않는다. 파일명과 그 파일에 실제 존재하는 내용을 반환해야 한다. Codex CLI 버전·인증·모델 호출·파일 접근을 이 단계에서 검증한다.
+성원은 `peer.env`를 사용한다. `--probe`는 선택한 실행기로 지정 폴더의 텍스트를 전달하고 실제 모델이 그 파일 근거로 응답하는지 확인한다. Slack 메시지는 보내지 않는다. 파일명과 그 파일에 실제 존재하는 내용을 반환해야 한다. 네이티브 CLI 버전·인증·모델 호출·파일 수집을 이 단계에서 검증한다.
 
 ## 3. 두 머신이 같은 중계 서버에 접속
 
@@ -97,8 +97,8 @@ Slack에서 `/tacit-status`로 두 Agent가 최근 연결되었는지 확인한�
 |---|---|
 | Slack 명령을 찾지 못함 | 앱 설치, 워크스페이스, manifest 명령 등록 |
 | 명령은 접수되지만 원문이 안 옴 | 송신 worker 접속, 사용자 토큰 소유자·scope |
-| 원문만 오고 설명이 안 옴 | 두 worker 로그의 exchange ID, Codex probe, 수신 worker 접속 |
-| `prepare_failed` / `interpret_failed` | 해당 머신의 Codex 인증·폴더·모델 연결, 수정 후 명령 재실행 |
+| 원문만 오고 설명이 안 옴 | 두 worker 로그의 exchange ID, 선택 실행기의 probe, 수신 worker 접속 |
+| `prepare_failed` / `interpret_failed` | 해당 머신의 실행기 인증·폴더·모델 연결, 수정 후 명령 재실행 |
 | 중계 재시작 뒤에도 대기 | 동일 SQLite 경로 사용 여부, 종료된 작업의 10분 lease 만료 |
 | 설명은 조회되지만 봇 DM이 안 옴 | Slack 커넥터 실행, 봇 토큰, `chat:write`·`im:write` |
 

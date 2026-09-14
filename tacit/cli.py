@@ -8,7 +8,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from tacit.client import RelayClient
-from tacit.provider import CodexProvider
+from tacit.provider import create_provider
+from tacit_runtime.client import resolve_executable
 
 
 def required(name):
@@ -28,7 +29,7 @@ def main():
     sub.add_parser("slack")
     sub.add_parser("worker")
     doctor = sub.add_parser("doctor")
-    doctor.add_argument("--probe", action="store_true", help="Run a real Codex file-reading probe")
+    doctor.add_argument("--probe", action="store_true", help="Probe the selected agent backend")
     args = parser.parse_args()
     load_dotenv(args.env_file, override=False)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -43,7 +44,12 @@ def main():
         return
 
     if args.command == "doctor":
-        print(f"Codex executable: {shutil.which('codex') or 'MISSING'}")
+        backend = os.environ.get("TACIT_BACKEND", "codex")
+        if backend not in {"codex", "kiro", "opencode"}:
+            raise ValueError("TACIT_BACKEND must be codex, kiro, or opencode")
+        executable = shutil.which("codex") if backend == "codex" else resolve_executable(backend)
+        print(f"Agent backend: {backend}")
+        print(f"Agent executable: {executable or 'MISSING'}")
         for name in (
             "TACIT_RELAY_URL",
             "TACIT_AGENT_TOKEN",
@@ -55,11 +61,13 @@ def main():
             "SLACK_APP_TOKEN",
         ):
             print(f"{name}: {'set' if os.environ.get(name) else 'missing'}")
-        if shutil.which("codex"):
+        if backend == "codex" and executable:
             subprocess.run(["codex", "login", "status"], check=False, timeout=20)
+        elif executable:
+            print("Native subscription login must be checked; --probe makes a real model request.")
         if args.probe:
-            provider = CodexProvider(
-                Path(required("TACIT_WORKSPACE")), os.environ.get("TACIT_MODEL")
+            provider = create_provider(
+                Path(required("TACIT_WORKSPACE")), backend, os.environ.get("TACIT_MODEL")
             )
             print(
                 provider.run(
@@ -76,8 +84,10 @@ def main():
         if args.command == "worker":
             from tacit.worker import SlackSender, Worker
 
-            provider = CodexProvider(
-                Path(required("TACIT_WORKSPACE")), os.environ.get("TACIT_MODEL")
+            provider = create_provider(
+                Path(required("TACIT_WORKSPACE")),
+                os.environ.get("TACIT_BACKEND", "codex"),
+                os.environ.get("TACIT_MODEL"),
             )
             owner = required("TACIT_OWNER")
             sender = SlackSender(required("SLACK_USER_TOKEN"), owner, required("TACIT_TEAM_ID"))

@@ -1,5 +1,19 @@
 # 첫 연결 구현 검증 기록
 
+## Kiro/OpenCode 통합 검증 (2026-09-15)
+
+- 두 작업 브랜치를 병합하고 `.gitignore` 규칙을 통합했다.
+- `TACIT_BACKEND`로 Codex/Kiro/OpenCode를 선택하는 워커와 doctor 경로를 연결했다.
+- `uv run pytest -q`: 28개 통과. Kiro → OpenCode 및 반대 방향의 모의 ACP 교환, 소스 전달, 응답 검사, 세션 분리, 인증 환경변수 제외를 포함한다.
+- `uv run ruff check tacit tacit_runtime tests scripts`: 통과.
+- `uv run python scripts/smoke.py`: 실제 TCP HTTP 서버와 별도 워커 프로세스 2개로 완료. 모델 및 Slack은 모두 모의 처리했고 외부 메시지는 보내지 않았다.
+- wheel 빌드 성공. `tacit`와 `tacit_runtime`이 모두 포함되는 것을 확인했다.
+- OpenCode의 저장된 OAuth 토큰은 갱신 시 401 오류가 발생했고, Kiro는 미로그인 상태다. 두 실행기의 실제 구독 모델 호출 성공은 아직 검증하지 못했다.
+
+아래는 first-contact 브랜치에서 수행한 기존 Codex 검증 기록이며, 이번 통합에서는 유료/구독 모델 호출을 재실행하지 않았다.
+
+## 기존 Codex 검증 기록
+
 검증일: 2026-09-15. 현재 머신의 로그인된 Codex CLI로 검증했다.
 
 ## 검증된 것

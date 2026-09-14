@@ -3,14 +3,28 @@
 import asyncio
 import json
 import os
-from pathlib import Path
 import shutil
 import signal
 from dataclasses import dataclass
+from pathlib import Path
 
 
 class RuntimeFailure(RuntimeError):
     pass
+
+
+def resolve_executable(backend):
+    root = Path(__file__).resolve().parent.parent
+    local = root / (
+        ".tools/kirocli/bin/kiro-cli"
+        if backend == "kiro"
+        else ".tools/opencode/node_modules/.bin/opencode"
+    )
+    return (
+        str(local)
+        if local.exists()
+        else shutil.which("kiro-cli" if backend == "kiro" else "opencode")
+    )
 
 
 @dataclass(frozen=True)
@@ -41,11 +55,7 @@ class AgentRuntime:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self.model, self.timeout = model, timeout
-        root = Path(__file__).resolve().parent.parent
-        local = root / (".tools/kirocli/bin/kiro-cli" if backend == "kiro" else
-                        ".tools/opencode/node_modules/.bin/opencode")
-        self.executable = executable or (str(local) if local.exists() else
-                                         shutil.which("kiro-cli" if backend == "kiro" else "opencode"))
+        self.executable = executable or resolve_executable(backend)
         if not self.executable:
             raise RuntimeFailure(f"{backend} executable is not installed")
         self.process = None
@@ -57,7 +67,11 @@ class AgentRuntime:
         self._collecting = False
 
     async def __aenter__(self):
-        env = dict(os.environ)
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("TACIT_", "SLACK_"))
+        }
         env["PATH"] = str(Path(self.executable).resolve().parent) + os.pathsep + env.get("PATH", "")
         if self.backend == "opencode":
             auth_root = Path(env.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
@@ -66,33 +80,49 @@ class AgentRuntime:
                 if auth.get("openai", {}).get("type") != "oauth":
                     raise ValueError("OAuth required")
             except (OSError, ValueError, TypeError, AttributeError) as exc:
-                raise RuntimeFailure("OpenCode: connect OpenAI with ChatGPT Plus/Pro first") from exc
+                raise RuntimeFailure(
+                    "OpenCode: connect OpenAI with ChatGPT Plus/Pro first"
+                ) from exc
             env.pop("OPENAI_API_KEY", None)
             env.pop("OPENCODE_AUTH_JSON", None)
-            env["OPENCODE_CONFIG_CONTENT"] = json.dumps({
-                "enabled_providers": ["openai"], "model": self.model,
-                "share": "disabled",
-                "permission": {"*": "deny", "read": "allow", "glob": "allow", "grep": "allow"},
-            })
+            env["OPENCODE_CONFIG_CONTENT"] = json.dumps(
+                {
+                    "enabled_providers": ["openai"],
+                    "model": self.model,
+                    "share": "disabled",
+                    "permission": {"*": "deny", "read": "allow", "glob": "allow", "grep": "allow"},
+                }
+            )
             command = [self.executable, "acp", "--pure"]
         else:
             command = [self.executable, "acp", "--trust-tools", "read"]
         self.process = await asyncio.create_subprocess_exec(
-            *command, cwd=self.workspace, env=env,
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, start_new_session=True, limit=2**20,
+            *command,
+            cwd=self.workspace,
+            env=env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+            limit=2**20,
         )
         try:
-            initialized = await self._rpc("initialize", {
-                "protocolVersion": 1, "clientCapabilities": {},
-                "clientInfo": {"name": "tacit", "version": "0.1.0"},
-            })
+            initialized = await self._rpc(
+                "initialize",
+                {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {},
+                    "clientInfo": {"name": "tacit", "version": "0.1.0"},
+                },
+            )
             if initialized.get("protocolVersion") != 1:
                 raise RuntimeFailure("Unsupported ACP version")
             session = await self._rpc("session/new", {"cwd": str(self.workspace), "mcpServers": []})
             self.session_id = session["sessionId"]
             if self.model:
-                await self._rpc("session/set_model", {"sessionId": self.session_id, "modelId": self.model})
+                await self._rpc(
+                    "session/set_model", {"sessionId": self.session_id, "modelId": self.model}
+                )
         except BaseException:
             await self.close()
             raise
@@ -130,9 +160,13 @@ class AgentRuntime:
                 raise RuntimeFailure("Use async with AgentRuntime(...)")
             self._chunks, self._output_bytes, self._collecting = [], 0, True
             try:
-                result = await self._rpc("session/prompt", {
-                    "sessionId": self.session_id, "prompt": [{"type": "text", "text": text}],
-                })
+                result = await self._rpc(
+                    "session/prompt",
+                    {
+                        "sessionId": self.session_id,
+                        "prompt": [{"type": "text", "text": text}],
+                    },
+                )
                 reason = result.get("stopReason")
                 if not isinstance(reason, str):
                     raise RuntimeFailure("ACP response has no stopReason")
@@ -153,7 +187,9 @@ class AgentRuntime:
         ident = self._counter
         try:
             async with asyncio.timeout(self.timeout):
-                await self._send({"jsonrpc": "2.0", "id": ident, "method": method, "params": params})
+                await self._send(
+                    {"jsonrpc": "2.0", "id": ident, "method": method, "params": params}
+                )
                 while True:
                     line = await self.process.stdout.readline()
                     if not line:
@@ -168,7 +204,9 @@ class AgentRuntime:
                         if "error" in item:
                             # Do not propagate arbitrary provider output into Slack/logs.
                             code = item["error"].get("code")
-                            raise RuntimeFailure(f"{self.backend}: {method} failed (ACP {code}); check native login/model")
+                            raise RuntimeFailure(
+                                f"{self.backend}: {method} failed (ACP {code}); check native login/model"
+                            )
                         return item["result"]
         except TimeoutError as exc:
             raise RuntimeFailure(f"{self.backend}: {method} timed out") from exc
@@ -178,16 +216,32 @@ class AgentRuntime:
     async def _handle_agent_message(self, item):
         if "id" in item:
             if item["method"] == "session/request_permission":
-                await self._send({"jsonrpc": "2.0", "id": item["id"],
-                                  "result": {"outcome": {"outcome": "cancelled"}}})
+                await self._send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": item["id"],
+                        "result": {"outcome": {"outcome": "cancelled"}},
+                    }
+                )
             else:
-                await self._send({"jsonrpc": "2.0", "id": item["id"],
-                                  "error": {"code": -32601, "message": "Client capability not supported"}})
+                await self._send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": item["id"],
+                        "error": {"code": -32601, "message": "Client capability not supported"},
+                    }
+                )
             return
         params = item.get("params", {})
-        if (self._collecting and item["method"] == "session/update"
-                and params.get("sessionId") == self.session_id):
+        if (
+            self._collecting
+            and item["method"] == "session/update"
+            and params.get("sessionId") == self.session_id
+        ):
             update = params.get("update", {})
             content = update.get("content", {})
-            if update.get("sessionUpdate") == "agent_message_chunk" and content.get("type") == "text":
+            if (
+                update.get("sessionUpdate") == "agent_message_chunk"
+                and content.get("type") == "text"
+            ):
                 self._chunks.append(content["text"])
