@@ -247,3 +247,41 @@ def test_codex_adapter_uses_real_cli_contract_and_separates_credentials(monkeypa
 
     monkeypatch.setattr("tacit.provider.subprocess.run", run)
     assert CodexProvider(tmp_path).run("probe") == "response"
+
+
+@pytest.mark.parametrize("backends", [("kiro", "opencode"), ("opencode", "kiro")])
+def test_mixed_backends_complete_exchange(setup, tmp_path, monkeypatch, backends):
+    from types import SimpleNamespace
+
+    from tacit.provider import create_provider
+
+    used = []
+
+    class Runtime:
+        def __init__(self, backend, workspace, **kwargs):
+            self.backend = backend
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def prompt(self, prompt):
+            used.append(self.backend)
+            if len(used) == 2:
+                assert "B17/p2" in prompt
+            return SimpleNamespace(text="B17/p2 versus B24/p3", stop_reason="end_turn")
+
+    monkeypatch.setattr("tacit.provider.AgentRuntime", Runtime)
+    store, app, bridge, alice, bob = setup
+    exchange = submit(bridge)
+    slack = FakeSlack()
+    for client, backend, name in zip((alice, bob), backends, ("alice", "bob"), strict=True):
+        provider = create_provider(
+            tmp_path, backend, "openai/test" if backend == "opencode" else None
+        )
+        assert Worker(client, provider, slack, tmp_path / name).once()
+    assert used == list(backends)
+    assert store.latest(BOB, exchange["id"])["state"] == "completed"
+    assert slack.messages == [exchange["text"]]

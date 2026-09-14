@@ -13,7 +13,7 @@ import httpx
 import uvicorn
 
 from tacit.client import RelayClient
-from tacit.provider import CodexProvider
+from tacit.provider import create_provider
 from tacit.relay import create_app
 from tacit.store import Store
 from tacit.worker import Worker
@@ -29,9 +29,9 @@ class SimulatedModel:
         return "SIMULATED: B17 uses p2; B24 uses p3."
 
 
-def run_worker(url, token, workspace, state_dir, live):
+def run_worker(url, token, workspace, state_dir, live, backend, model):
     relay = RelayClient(url, token)
-    provider = CodexProvider(Path(workspace)) if live else SimulatedModel()
+    provider = create_provider(Path(workspace), backend, model) if live else SimulatedModel()
     try:
         assert Worker(relay, provider, SimulatedSlack(), Path(state_dir)).once()
     finally:
@@ -41,6 +41,8 @@ def run_worker(url, token, workspace, state_dir, live):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live-model", action="store_true")
+    parser.add_argument("--backend", choices=["codex", "kiro", "opencode"], default="codex")
+    parser.add_argument("--model")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     members = {"UAAA": secrets.token_urlsafe(32), "UBBB": secrets.token_urlsafe(32)}
@@ -84,6 +86,8 @@ def main():
                         str(root / "examples" / folder),
                         str(Path(directory) / owner),
                         args.live_model,
+                        args.backend,
+                        args.model,
                     ),
                 )
                 process.start()
@@ -99,7 +103,7 @@ def main():
             if result["state"] != "completed":
                 raise RuntimeError(f"Exchange ended in {result['state']}: {result['error']}")
             print("Transport: real TCP HTTP on loopback", flush=True)
-            print(f"Model: {'real Codex' if args.live_model else 'SIMULATED'}", flush=True)
+            print(f"Model: {args.backend if args.live_model else 'SIMULATED'}", flush=True)
             print("Slack: SIMULATED, no messages sent", flush=True)
             print("Sender context:\n" + result["context"], flush=True)
             print("Recipient explanation:\n" + result["result"], flush=True)
