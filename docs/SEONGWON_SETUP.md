@@ -9,12 +9,12 @@
 | 필요한 항목 | 설명 |
 |---|---|
 | `peer.env` 파일 | 성원님 전용 Agent 인증 설정. 재용 머신의 `/home/jaeyong/ICT/ict_aws/.tacit/setup/peer.env`에 있습니다. Git에는 포함되지 않습니다. |
-| 서버 접속 방법 | SSH 호스트·계정·인증 방법 또는 공용 HTTPS 중계 주소. **현재 접속 경로는 아직 확정되지 않았습니다.** |
+| 서버 접속 방법 | HTTPS 터널 개통 완료. 아래 5단계의 주소를 사용합니다. SSH 접속은 필요하지 않습니다. |
 | Slack 앱 관리 접근 | 아래 기존 앱의 Collaborator 초대. 본인 사용자 토큰을 발급받는 데 사용합니다. |
 
 재용님은 `peer.env`만 별도로 전달합니다. 이 문서와 GitHub에는 토큰 값을 넣지 않습니다. 앱의 `client_secret`, `slack-app.json`, `relay.env`, 재용님 사용자 토큰은 성원님 설정에 필요하지 않습니다.
 
-서버 접속 경로가 아직 없어도 1~4단계까지 먼저 진행할 수 있습니다. 두 머신 간 소통은 5단계의 접속이 되어야 가능합니다.
+현재 재용님이 전달하는 `peer.env`에는 HTTPS 주소가 반영되어 있습니다. 이미 파일을 받았다면 5단계의 주소로 `TACIT_RELAY_URL`을 수정합니다.
 
 ## 1. 코드와 실행 환경 준비
 
@@ -113,7 +113,17 @@ uv run tacit --env-file .tacit/setup/peer.env doctor --probe
 
 ## 5. 재용님 중계 서버에 연결
 
-재용님과 접속 방법을 먼저 확정합니다. **성원님 머신의 `127.0.0.1`은 재용님 머신을 뜻하지 않습니다.** 아래 SSH 터널을 쓰는 경우에만 로컬 주소를 그대로 사용할 수 있습니다.
+현재 사용할 주소는 다음과 같습니다. `peer.env`에 이 값을 넣으면 **SSH 터널 없이** 접속할 수 있습니다.
+
+```dotenv
+TACIT_RELAY_URL="https://currently-atlantic-enquiries-zshops.trycloudflare.com"
+```
+
+연결 확인: [중계 서버 상태](https://currently-atlantic-enquiries-zshops.trycloudflare.com/health).
+
+이 주소는 개발용 Cloudflare Quick Tunnel입니다. 재용님 머신과 서버·터널 프로세스가 실행 중이어야 합니다. 터널을 새로 만들면 주소가 바뀔 수 있으므로 접속이 안 되면 재용님에게 현재 주소를 확인합니다. 사용자별 Agent 토큰 인증은 그대로 필요합니다.
+
+아래 SSH 방식은 향후 터널 대신 직접 연결할 때의 대안입니다. **성원님 머신의 `127.0.0.1`은 재용님 머신을 뜻하지 않습니다.**
 
 ### SSH 접속이 가능한 경우
 

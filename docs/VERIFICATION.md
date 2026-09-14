@@ -8,6 +8,7 @@
 - 실제 Slack manifest 검증과 앱 생성 성공: `T08TM41TK4P`의 `A0C1VBWU4N8`. 자격증명은 로컬 `.tacit/setup/slack-app.json`에 저장하고 Git에서 제외했다.
 - Slack 설치 인증 확인: 봇 토큰의 워크스페이스와 scope, 재용의 사용자 토큰 소유자와 scope, 앱 토큰의 Socket Mode 인증을 실제 API로 확인했다.
 - 실제 Slack Socket Mode WebSocket 연결이 열렸고, 재용 worker가 중계 서버에 접속하는 것을 확인했다. 성원 worker는 아직 접속 전이다.
+- 외부 HTTPS 터널 개통: 공개 주소의 `/health` 정상 응답, 인증 없는 `/v1/agents` 요청의 401 거부, 올바른 인증을 가진 조회 성공을 확인했다. 성원용 `peer.env`에 HTTPS 주소를 반영했다.
 - `uv run ruff check tacit tests scripts`: 통과.
 - `tacit doctor --probe`: 실제 Codex 모델이 로컬 실행기가 읽은 예제 파일명과 B17의 전처리 조건을 반환했다.
 - `uv run python scripts/smoke.py --live-model`: 실제 TCP HTTP 서버와 별도 worker 프로세스 2개, 실제 Codex 호출 2단계를 거쳐 완료했다. 이 검증의 Slack 전송은 모의 처리였으며 실제 사용자에게 메시지를 보내지 않았다.

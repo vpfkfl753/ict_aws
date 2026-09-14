@@ -51,6 +51,9 @@ uv run tacit --env-file .tacit/setup/owner.env doctor --probe
 
 ## 3. 두 머신이 같은 중계 서버에 접속
 
+현재 외부 HTTPS 경로: `https://currently-atlantic-enquiries-zshops.trycloudflare.com`.
+재용 머신의 `peer.env`에는 이 주소를 반영했다. 성원 머신은 이 주소를 사용하면 SSH 설정 없이 접속할 수 있다. 개발용 Quick Tunnel이므로 재용 머신과 터널 프로세스가 실행 중이어야 하며 터널을 새로 만들면 주소가 바뀔 수 있다.
+
 중계 서버 프로세스는 재용 머신, 팀의 개발 서버 또는 호스팅 환경 중 한 곳에서 실행한다. 원격에서 직접 사용할 때에는 HTTPS로 노출한다. 원격 평문 HTTP 주소는 실행기가 거부한다.
 
 가장 먼저 확인할 수 있는 방식은 **SSH 터널**이다. 성원 머신에서 재용 머신 또는 중계 호스트에 SSH 접속이 이미 가능하다면:
@@ -61,7 +64,7 @@ ssh -N -L 8765:127.0.0.1:8765 SSH_USER@RELAY_HOST
 
 이 경우 성원 `peer.env`의 `TACIT_RELAY_URL`도 `http://127.0.0.1:8765`로 둔다. 로컬 HTTP가 SSH로 암호화되어 중계 호스트의 loopback 서버에 연결된다. 다른 앱이 8765를 사용하면 터널의 첫 포트를 바꾸고 설정도 맞춘다.
 
-SSH 접속 경로가 없다면 공통 HTTPS 주소를 제공하는 호스트나 HTTPS 터널을 준비한 뒤, 원격 클라이언트들의 `TACIT_RELAY_URL`을 그 주소로 변경한다. 배포 계정과 호스트는 아직 지정되지 않았으며 자동으로 외부 배포하지 않는다.
+현재는 재용 머신의 loopback 서버를 Cloudflare HTTPS 터널에 연결했다. 별도의 클라우드 서버로 이전하는 경우 원격 클라이언트들의 `TACIT_RELAY_URL`을 새 주소로 변경한다.
 
 중계 서버의 공개 주소는 Slack 이벤트 수신 주소가 아니다. Slack 커넥터는 Socket Mode로 Slack에 접속한다. 두 Agent 사이의 맥락은 Slack을 통과하지 않는다.
 
