@@ -31,6 +31,7 @@ def register_handlers(app, relay, team):
     @app.command("/tacit-send")
     def send(ack, command, respond):
         ack()
+        log.info("Received /tacit-send team=%s user=%s", command["team_id"], command["user_id"])
         if command["team_id"] != team:
             respond("등록된 워크스페이스에서만 사용할 수 있습니다.")
             return
@@ -57,6 +58,7 @@ def register_handlers(app, relay, team):
     @app.command("/tacit-receive")
     def receive(ack, command, respond):
         ack()
+        log.info("Received /tacit-receive team=%s user=%s", command["team_id"], command["user_id"])
         if command["team_id"] != team:
             respond("등록된 워크스페이스에서만 사용할 수 있습니다.")
             return
@@ -72,6 +74,7 @@ def register_handlers(app, relay, team):
     @app.command("/tacit-status")
     def status(ack, command, respond):
         ack()
+        log.info("Received /tacit-status team=%s user=%s", command["team_id"], command["user_id"])
         if command["team_id"] != team:
             respond("등록된 워크스페이스에서만 사용할 수 있습니다.")
             return
