@@ -1,6 +1,8 @@
 # 현재 중계 서버 외부 접속
 
-- 공개 주소: `https://currently-atlantic-enquiries-zshops.trycloudflare.com`
+2026-09-15 작업 종료 시 서버와 터널을 중지했다. 아래 주소는 마지막 연결 기록이며 현재 사용 가능한 주소가 아니다. 재개 시 새 주소를 확인한다. [재개 절차](MILESTONE.md#재개-순서).
+
+- 마지막 공개 주소: `https://currently-atlantic-enquiries-zshops.trycloudflare.com`
 - 연결 대상: 재용 머신의 `http://127.0.0.1:8765`
 - 방식: Cloudflare Quick Tunnel, HTTP/2 연결
 - 로컬 실행 파일: `.tacit/bin/cloudflared`
@@ -8,9 +10,11 @@
 - 현재 주소 기록: `.tacit/public-url.txt`
 - 프로세스 ID 기록: `.tacit/services.json`의 `tunnel`
 
-서버와 터널은 현재 재용 머신에서 백그라운드로 실행 중이다. 사용자별 Agent 인증은 그대로 적용된다. 서버 원문·맥락을 전달하는 HTTPS 연결은 Cloudflare를 경유하며, Agent끼리의 종단간 암호화는 구현되지 않았다.
+서버와 터널은 재용 머신에서 실행하는 구성이다. 사용자별 Agent 인증이 적용된다. 서버 원문·맥락을 전달하는 HTTPS 연결은 Cloudflare를 경유하며, Agent끼리의 종단간 암호화는 구현되지 않았다.
 
 ## 확인
+
+다음은 당시 검증에 사용한 명령이다. 재개 후에는 새 주소로 바꾼다.
 
 ```bash
 curl --fail https://currently-atlantic-enquiries-zshops.trycloudflare.com/health

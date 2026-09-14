@@ -218,6 +218,7 @@ def test_slash_ack_happens_before_network_and_uses_sender_identity():
         ack=lambda: order.append("ack"),
         command={"team_id": "T1", "trigger_id": "1", "user_id": ALICE, "text": "<@UBBB> hi"},
         respond=lambda text: order.append("respond"),
+        client=None,
     )
     assert order == ["ack", "request", "respond"]
 
