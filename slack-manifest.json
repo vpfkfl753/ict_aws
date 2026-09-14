@@ -1,0 +1,28 @@
+{
+  "display_information": {
+    "name": "Tacit",
+    "description": "Local agents exchange context for your conversations",
+    "background_color": "#246b57"
+  },
+  "features": {
+    "bot_user": {"display_name": "Tacit", "always_online": false},
+    "app_home": {"home_tab_enabled": false, "messages_tab_enabled": true},
+    "slash_commands": [
+      {"command": "/tacit-send", "description": "Send a DM with agent context", "usage_hint": "@person message", "should_escape": true},
+      {"command": "/tacit-receive", "description": "Read received context", "usage_hint": "[exchange-id]", "should_escape": false},
+      {"command": "/tacit-status", "description": "Check local agent connections", "should_escape": false}
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": ["commands", "chat:write", "im:write"],
+      "user": ["chat:write", "im:write"]
+    }
+  },
+  "settings": {
+    "socket_mode_enabled": true,
+    "interactivity": {"is_enabled": true},
+    "org_deploy_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
