@@ -4,7 +4,10 @@
 
 ## 검증된 것
 
-- 자동 테스트 12개: 양방향 전달, 원문과 맥락 연결, 사용자별 작업 권한, 요청 중복 방지, 임대 만료 재할당, 모델 실패 표시, 기존 원문 재사용, Slack ack 순서, 입력 파싱, 파일 수집 범위·크기 제한, 설정 생성, Slack 사용자 토큰 소유자 검사.
+- 자동 테스트 18개: 양방향 전달, 원문과 맥락 연결, 사용자별 작업 권한, 요청 중복 방지, 임대 만료 재할당, 모델 실패 표시, 기존 원문 재사용, Slack ack 순서, 입력 파싱, 파일 수집 범위·크기 제한, 설정 생성, Slack 사용자 토큰 소유자 검사, 앱 생성·중복 생성 방지·실패 처리 및 설치 확인.
+- 실제 Slack manifest 검증과 앱 생성 성공: `T08TM41TK4P`의 `A0C1VBWU4N8`. 자격증명은 로컬 `.tacit/setup/slack-app.json`에 저장하고 Git에서 제외했다.
+- Slack 설치 인증 확인: 봇 토큰의 워크스페이스와 scope, 재용의 사용자 토큰 소유자와 scope, 앱 토큰의 Socket Mode 인증을 실제 API로 확인했다.
+- 실제 Slack Socket Mode WebSocket 연결이 열렸고, 재용 worker가 중계 서버에 접속하는 것을 확인했다. 성원 worker는 아직 접속 전이다.
 - `uv run ruff check tacit tests scripts`: 통과.
 - `tacit doctor --probe`: 실제 Codex 모델이 로컬 실행기가 읽은 예제 파일명과 B17의 전처리 조건을 반환했다.
 - `uv run python scripts/smoke.py --live-model`: 실제 TCP HTTP 서버와 별도 worker 프로세스 2개, 실제 Codex 호출 2단계를 거쳐 완료했다. 이 검증의 Slack 전송은 모의 처리였으며 실제 사용자에게 메시지를 보내지 않았다.
@@ -29,7 +32,7 @@ Codex 모델 연결은 되었지만 내부 파일 읽기 명령이 현재 머신
 
 ## 아직 검증하지 않은 것
 
-- `T08TM41TK4P`에 실제 Slack 앱 생성·설치 및 두 사용자의 OAuth 토큰 발급.
+- 성원 사용자의 OAuth 토큰 연결 검증.
 - 실제 Socket Mode 명령 수신, 사람 명의의 1:1 DM 전송, 수신자 봇 DM 표시.
 - 성원 머신에서 모델 호출·파일 수집·중계 연결.
 - 서로 다른 머신/네트워크에서의 통신과 실제 업무 자료 기반 양방향 소통.
