@@ -65,6 +65,8 @@ uv run python -m tacit.setup \
 
 Slack 앱 생성부터 두 머신 연결까지는 [첫 연결 가이드](docs/FIRST_CONTACT.md)를 따른다.
 
+성원님에게 전달할 설치·연결 절차는 [우성원 연결 안내](docs/SEONGWON_SETUP.md)에 별도로 정리했다. `peer.env`와 실제 서버 접속 정보는 문서 외에 따로 전달해야 한다.
+
 ## 실행 명령
 
 중계 서버와 Slack 커넥터는 각각 하나만 실행한다. 아래는 **별도 터미널**에서 실행할 명령이다.
