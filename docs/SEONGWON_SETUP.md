@@ -1,6 +1,6 @@
 # 우성원: Tacit 연결 안내
 
-2026-09-15: 두 머신 연결과 재용 → 성원 전달 1건의 처리·알림 완료를 확인한 뒤, 재용 머신의 서비스를 중지했습니다. 성원님도 실행 중인 worker 터미널에서 `Ctrl+C`로 종료해주세요. 아래 HTTPS 주소는 마지막 연결 기록입니다. 다음 실행 때 새 주소를 받아야 하며, 기존 앱·토큰을 새로 만들 필요는 없습니다. [마일스톤과 재개 순서](MILESTONE.md).
+2026-09-17: 재용 머신의 중앙 서버를 고정 ngrok 주소로 전환했습니다. 이미 연결한 성원님은 **최신 코드 받기 → 본인 `peer.env`의 주소 변경 → worker 재시작**만 하면 됩니다. 앱·토큰은 새로 만들지 않습니다. 최신 worker는 ngrok 요청 한도를 아끼도록 긴 대기 요청을 사용하므로 주소만 바꾸지 말고 코드도 갱신해주세요. [마일스톤과 재개 순서](MILESTONE.md).
 
 목표는 성원님 머신의 Agent가 로컬 작업 자료를 읽고, 재용님과 Slack으로 대화할 때 필요한 맥락을 교환하도록 연결하는 것입니다.
 
@@ -11,12 +11,12 @@
 | 필요한 항목 | 설명 |
 |---|---|
 | `peer.env` 파일 | 성원님 전용 Agent 인증 설정. 재용 머신의 `/home/jaeyong/ICT/ict_aws/.tacit/setup/peer.env`에 있습니다. Git에는 포함되지 않습니다. |
-| 서버 접속 방법 | 재개 시 재용님에게 새 HTTPS 주소를 받습니다. SSH 접속은 필요하지 않습니다. |
+| 서버 접속 방법 | 아래 5단계의 고정 ngrok HTTPS 주소. SSH 접속은 필요하지 않습니다. |
 | Slack 앱 관리 접근 | 아래 기존 앱의 Collaborator 초대. 본인 사용자 토큰을 발급받는 데 사용합니다. |
 
 재용님은 `peer.env`만 별도로 전달합니다. 이 문서와 GitHub에는 토큰 값을 넣지 않습니다. 앱의 `client_secret`, `slack-app.json`, `relay.env`, 재용님 사용자 토큰은 성원님 설정에 필요하지 않습니다.
 
-전달받은 `peer.env`에는 당시의 HTTPS 주소가 반영되어 있습니다. 재개 시 새 주소로 `TACIT_RELAY_URL`을 수정합니다.
+과거 Cloudflare 주소가 들어 있는 `peer.env`는 아래 고정 주소로 한 번 변경합니다. 이후 중앙 서비스의 on/off마다 주소를 바꿀 필요는 없습니다.
 
 ## 1. 코드와 실행 환경 준비
 
@@ -115,15 +115,15 @@ uv run tacit --env-file .tacit/setup/peer.env doctor --probe
 
 ## 5. 재용님 중계 서버에 연결
 
-마지막으로 사용한 주소는 다음과 같습니다. 현재는 중지된 상태이므로 그대로 사용하지 말고 재용님에게 새 주소를 받습니다. 새 HTTPS 주소를 `peer.env`에 넣으면 **SSH 터널 없이** 접속할 수 있습니다.
+사용할 고정 주소는 다음과 같습니다. `peer.env`에 넣으면 **SSH 터널 없이** 접속할 수 있습니다.
 
 ```dotenv
-TACIT_RELAY_URL="https://currently-atlantic-enquiries-zshops.trycloudflare.com"
+TACIT_RELAY_URL="https://floral-establish-diffuser.ngrok-free.dev"
 ```
 
-연결 확인: [중계 서버 상태](https://currently-atlantic-enquiries-zshops.trycloudflare.com/health).
+연결 확인: [중계 서버 상태](https://floral-establish-diffuser.ngrok-free.dev/health). 브라우저에는 ngrok 안내 페이지가 먼저 나올 수 있습니다. worker의 API 요청은 안내 페이지를 건너뜁니다.
 
-이 주소는 개발용 Cloudflare Quick Tunnel입니다. 재용님 머신과 서버·터널 프로세스가 실행 중이어야 합니다. 터널을 새로 만들면 주소가 바뀔 수 있으므로 접속이 안 되면 재용님에게 현재 주소를 확인합니다. 사용자별 Agent 토큰 인증은 그대로 필요합니다.
+이 주소는 ngrok 계정에 할당된 고정 개발용 도메인입니다. 재용님 머신과 중앙 서비스가 실행 중이어야 합니다. 재용님은 `tacit-server on/off/status`로 관리합니다. 사용자별 Agent 토큰 인증은 그대로 필요하며, 성원님 머신에는 ngrok 설치나 ngrok 토큰이 필요하지 않습니다.
 
 아래 SSH 방식은 향후 터널 대신 직접 연결할 때의 대안입니다. **성원님 머신의 `127.0.0.1`은 재용님 머신을 뜻하지 않습니다.**
 

@@ -16,6 +16,7 @@ dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
 
 [project.scripts]
 tacit = "tacit.cli:main"
+tacit-server = "tacit.server:main"
 
 [build-system]
 requires = ["hatchling"]
