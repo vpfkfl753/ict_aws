@@ -1,12 +1,15 @@
 # 실제 두 사용자 첫 연결
 
+우성원 머신에서 합류한다면 [우성원 연결 가이드](WOOSUNG_ONBOARDING.md)를 먼저 따른다.
+필요한 토큰, 재용에게 받을 설정, 본인 토큰 검사 및 워커 실행 순서를 정리했다.
+
 ## 참여자
 
 | 항목 | 값 |
 |---|---|
 | Slack 워크스페이스 | `T08TM41TK4P` |
-| 이재용, 현재 머신 | `U09F4SENS3X` |
-| 우성원, 동료 머신 | `U0ABNAMVB7U` |
+| 이재용, 중계·Slack 커넥터 운영 | `U09F4SENS3X` |
+| 우성원, 연결할 상대 에이전트 | `U0ABNAMVB7U` |
 
 완료 조건은 두 사람이 실제 Slack 원문과 Agent 설명을 확인하는 것이다. 아래에는 아직 수행하지 않은 실사용 체크도 포함되어 있다.
 
@@ -41,7 +44,11 @@ code .tacit/setup/slack.env .tacit/setup/owner.env
 uv run python -m tacit.check_slack
 ```
 
-수신자 설정을 확인하려면 `--worker-env .tacit/setup/peer.env`를 지정한다.
+우성원 워커만 확인할 때는 공용 커넥터 토큰 없이 다음을 실행한다.
+
+```bash
+uv run python -m tacit.check_slack --worker-only --worker-env .tacit/setup/peer.env
+```
 
 각 머신에 선택한 실행기를 설치하고 자신의 계정으로 로그인한다. 기본값은 Codex이며 `codex login`을 사용한다. 대회 Kiro 구독은 `TACIT_BACKEND=kiro`, ChatGPT 구독의 OpenCode 연결은 `TACIT_BACKEND=opencode`로 선택한다. OpenCode에는 `TACIT_MODEL=openai/<model>`도 설정한다. 자세한 로그인 방법은 [실행기 가이드](../tacit_runtime/README.md)를 따른다. 설정의 `TACIT_WORKSPACE`를 해당 머신에 실제 존재하는 폴더로 바꾼다.
 

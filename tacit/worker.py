@@ -87,10 +87,16 @@ class Worker:
         return True
 
     def run(self):
+        connected = False
         while True:
             try:
-                if not self.once():
+                worked = self.once()
+                if not connected:
+                    log.info("Relay authenticated; worker ready")
+                    connected = True
+                if not worked:
                     time.sleep(2)
             except Exception as exc:
+                connected = False
                 log.error("Relay unavailable (%s); retrying in 5 seconds", type(exc).__name__)
                 time.sleep(5)
