@@ -39,7 +39,7 @@ def main():
 
         from tacit.relay import create_app
 
-        uvicorn.run(create_app(), host=args.host, port=args.port)
+        uvicorn.run(create_app(), host=args.host, port=args.port, timeout_graceful_shutdown=5)
         return
 
     if args.command == "doctor":
@@ -82,7 +82,18 @@ def main():
             owner = required("TACIT_OWNER")
             sender = SlackSender(required("SLACK_USER_TOKEN"), owner, required("TACIT_TEAM_ID"))
             worker = Worker(
-                relay, provider, sender, Path(os.environ.get("TACIT_STATE_DIR", f".tacit/{owner}"))
+                relay,
+                provider,
+                sender,
+                Path(os.environ.get("TACIT_STATE_DIR", f".tacit/{owner}")),
+                wait_seconds=int(
+                    os.environ.get(
+                        "TACIT_CLAIM_WAIT_SECONDS",
+                        "0"
+                        if relay.http.base_url.host in {"localhost", "127.0.0.1", "::1"}
+                        else "180",
+                    )
+                ),
             )
             worker.run()
         else:
