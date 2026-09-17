@@ -11,7 +11,9 @@ class RelayClient:
         ):
             raise ValueError("Use HTTPS for a remote relay (HTTP is allowed on localhost)")
         self.http = httpx.Client(
-            base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=20
+            base_url=url.rstrip("/"),
+            headers={"Authorization": f"Bearer {token}", "ngrok-skip-browser-warning": "1"},
+            timeout=20,
         )
 
     def request(self, method, path, **kwargs):

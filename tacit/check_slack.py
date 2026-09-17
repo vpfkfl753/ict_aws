@@ -8,28 +8,30 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError, SlackRequestError
 
 
-def check(slack_env, worker_env, client_factory=WebClient):
-    slack = dotenv_values(slack_env)
+def check(slack_env, worker_env, client_factory=WebClient, *, worker_only=False):
+    slack = {} if worker_only else dotenv_values(slack_env)
     worker = dotenv_values(worker_env)
     findings = []
 
     def report(name, ok, detail):
         findings.append({"check": name, "ok": ok, "detail": detail})
 
-    team = slack.get("TACIT_TEAM_ID")
+    team = worker.get("TACIT_TEAM_ID") if worker_only else slack.get("TACIT_TEAM_ID")
     owner = worker.get("TACIT_OWNER")
     report(
         "configuration",
         bool(team and owner and worker.get("TACIT_TEAM_ID") == team),
         "Workspace and owner configured"
         if team and owner and worker.get("TACIT_TEAM_ID") == team
-        else "Check TACIT_TEAM_ID and TACIT_OWNER in both environment files",
+        else "Check TACIT_TEAM_ID and TACIT_OWNER in the environment configuration",
     )
 
     for name, values, bot in (
         ("SLACK_BOT_TOKEN", slack, True),
         ("SLACK_USER_TOKEN", worker, False),
     ):
+        if worker_only and bot:
+            continue
         token = values.get(name)
         if not token:
             report(name, False, "Not configured")
@@ -57,6 +59,9 @@ def check(slack_env, worker_env, client_factory=WebClient):
             report(name, False, f"Slack error: {exc.response.get('error', 'unknown_error')}")
         except (SlackRequestError, OSError):
             report(name, False, "Could not reach Slack")
+
+    if worker_only:
+        return findings
 
     token = slack.get("SLACK_APP_TOKEN")
     if not token:
@@ -87,11 +92,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slack-env", type=Path, default=Path(".tacit/setup/slack.env"))
     parser.add_argument("--worker-env", type=Path, default=Path(".tacit/setup/owner.env"))
+    parser.add_argument(
+        "--worker-only",
+        action="store_true",
+        help="Check only this user's token; no shared Slack connector configuration needed",
+    )
     args = parser.parse_args()
-    for path in (args.slack_env, args.worker_env):
+    paths = (args.worker_env,) if args.worker_only else (args.slack_env, args.worker_env)
+    for path in paths:
         if not path.is_file():
             parser.error(f"Configuration file not found: {path}")
-    findings = check(args.slack_env, args.worker_env)
+    findings = check(args.slack_env, args.worker_env, worker_only=args.worker_only)
     for finding in findings:
         print(f"{'OK' if finding['ok'] else 'WAIT'} {finding['check']}: {finding['detail']}")
     raise SystemExit(0 if all(finding["ok"] for finding in findings) else 1)

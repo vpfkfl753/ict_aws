@@ -1,12 +1,15 @@
 # 실제 두 사용자 첫 연결
 
+우성원 머신에서 합류한다면 [우성원 연결 가이드](WOOSUNG_ONBOARDING.md)를 먼저 따른다.
+필요한 토큰, 재용에게 받을 설정, 본인 토큰 검사 및 워커 실행 순서를 정리했다.
+
 ## 참여자
 
 | 항목 | 값 |
 |---|---|
 | Slack 워크스페이스 | `T08TM41TK4P` |
-| 이재용, 현재 머신 | `U09F4SENS3X` |
-| 우성원, 동료 머신 | `U0ABNAMVB7U` |
+| 이재용, 중계·Slack 커넥터 운영 | `U09F4SENS3X` |
+| 우성원, 연결할 상대 에이전트 | `U0ABNAMVB7U` |
 
 완료 조건은 두 사람이 실제 Slack 원문과 Agent 설명을 확인하는 것이다. 아래에는 아직 수행하지 않은 실사용 체크도 포함되어 있다.
 
@@ -41,7 +44,11 @@ code .tacit/setup/slack.env .tacit/setup/owner.env
 uv run python -m tacit.check_slack
 ```
 
-수신자 설정을 확인하려면 `--worker-env .tacit/setup/peer.env`를 지정한다.
+우성원 워커만 확인할 때는 공용 커넥터 토큰 없이 다음을 실행한다.
+
+```bash
+uv run python -m tacit.check_slack --worker-only --worker-env .tacit/setup/peer.env
+```
 
 각 머신에 선택한 실행기를 설치하고 자신의 계정으로 로그인한다. 기본값은 Codex이며 `codex login`을 사용한다. 대회 Kiro 구독은 `TACIT_BACKEND=kiro`, ChatGPT 구독의 OpenCode 연결은 `TACIT_BACKEND=opencode`로 선택한다. OpenCode에는 `TACIT_MODEL=openai/<model>`도 설정한다. 자세한 로그인 방법은 [실행기 가이드](../tacit_runtime/README.md)를 따른다. 설정의 `TACIT_WORKSPACE`를 해당 머신에 실제 존재하는 폴더로 바꾼다.
 
@@ -53,9 +60,12 @@ uv run tacit --env-file .tacit/setup/owner.env doctor --probe
 
 ## 3. 두 머신이 같은 중계 서버에 접속
 
+고정 외부 HTTPS 경로: `https://floral-establish-diffuser.ngrok-free.dev`.
+재용 머신의 배포용 `peer.env`에는 이 주소를 반영했다. 성원 머신도 본인의 `peer.env`를 이 주소로 변경하고 최신 코드를 받아 worker를 다시 실행한다. SSH 설정은 필요 없다. 같은 ngrok 계정의 지정 도메인을 사용하므로 중앙 서비스를 재시작해도 주소를 바꾸지 않는다. 재용 머신과 중앙 서비스는 켜져 있어야 한다.
+
 중계 서버 프로세스는 재용 머신, 팀의 개발 서버 또는 호스팅 환경 중 한 곳에서 실행한다. 원격에서 직접 사용할 때에는 HTTPS로 노출한다. 원격 평문 HTTP 주소는 실행기가 거부한다.
 
-가장 먼저 확인할 수 있는 방식은 **SSH 터널**이다. 성원 머신에서 재용 머신 또는 중계 호스트에 SSH 접속이 이미 가능하다면:
+ngrok 대신 사용할 수 있는 대안은 **SSH 터널**이다. 성원 머신에서 재용 머신 또는 중계 호스트에 SSH 접속이 이미 가능하다면:
 
 ```bash
 ssh -N -L 8765:127.0.0.1:8765 SSH_USER@RELAY_HOST
@@ -63,23 +73,19 @@ ssh -N -L 8765:127.0.0.1:8765 SSH_USER@RELAY_HOST
 
 이 경우 성원 `peer.env`의 `TACIT_RELAY_URL`도 `http://127.0.0.1:8765`로 둔다. 로컬 HTTP가 SSH로 암호화되어 중계 호스트의 loopback 서버에 연결된다. 다른 앱이 8765를 사용하면 터널의 첫 포트를 바꾸고 설정도 맞춘다.
 
-SSH 접속 경로가 없다면 공통 HTTPS 주소를 제공하는 호스트나 HTTPS 터널을 준비한 뒤, 원격 클라이언트들의 `TACIT_RELAY_URL`을 그 주소로 변경한다. 배포 계정과 호스트는 아직 지정되지 않았으며 자동으로 외부 배포하지 않는다.
+현재는 재용 머신의 loopback 서버를 ngrok HTTPS 터널에 연결했다. 다른 중앙 머신으로 이전할 때에도 같은 ngrok 계정·도메인을 사용하면 공개 주소를 유지할 수 있다. 기존 중앙 서비스를 먼저 내려 중복 연결을 피한다.
 
 중계 서버의 공개 주소는 Slack 이벤트 수신 주소가 아니다. Slack 커넥터는 Socket Mode로 Slack에 접속한다. 두 Agent 사이의 맥락은 Slack을 통과하지 않는다.
 
 ## 4. 프로세스 시작
 
-중계 호스트:
+중계 호스트인 재용 머신에는 사용자 systemd 서비스가 설치되어 있다. 중계 서버·Slack 커넥터·ngrok을 함께 켠다:
 
 ```bash
-uv run tacit --env-file .tacit/setup/relay.env relay
+tacit-server on
 ```
 
-Slack 커넥터는 팀에서 하나만:
-
-```bash
-uv run tacit --env-file .tacit/setup/slack.env slack
-```
+별도의 `relay`, `slack`, `ngrok` 프로세스를 중복 실행하지 않는다. `tacit-server off`로 중앙 서비스를 끈다. 처음 중앙 머신을 구성하는 절차는 [중앙 서버 운영](RELAY_TUNNEL.md)을 따른다.
 
 재용 머신:
 
@@ -96,6 +102,8 @@ uv run tacit --env-file .tacit/setup/peer.env worker
 Slack에서 `/tacit-status`로 두 Agent가 최근 연결되었는지 확인한다. 한쪽이 꺼져 있으면 작업은 대기한다. 동일 사용자의 worker를 여러 개 켜지 않는다.
 
 ## 5. 첫 통신의 완료 조건
+
+`/tacit-send`만 실행해 전송 창에서 상대와 메시지를 입력해도 된다. 멘션을 인식하지 못하면 같은 창이 열리므로 상대를 선택하고 내용을 확인한 뒤 전송한다.
 
 - [ ] 재용이 `/tacit-send @우성원 이번 결과 baseline이랑 비교해봤어?`를 실행한다.
 - [ ] 성원과의 기존 1:1 DM에 재용 명의의 원문이 도착한다.

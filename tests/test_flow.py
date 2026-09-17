@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -218,6 +219,7 @@ def test_slash_ack_happens_before_network_and_uses_sender_identity():
         ack=lambda: order.append("ack"),
         command={"team_id": "T1", "trigger_id": "1", "user_id": ALICE, "text": "<@UBBB> hi"},
         respond=lambda text: order.append("respond"),
+        client=None,
     )
     assert order == ["ack", "request", "respond"]
 
@@ -226,6 +228,65 @@ def test_parse_send():
     assert parse_send("<@U123|name> hello\nworld") == ("U123", "hello\nworld")
     with pytest.raises(ValueError):
         parse_send("@name hello")
+
+
+def test_long_poll_delivers_new_work_without_waiting_for_deadline(setup):
+    store, app, bridge, alice, bob = setup
+    timer = threading.Timer(0.05, lambda: store.create("later", ALICE, BOB, "hello"))
+    timer.start()
+    try:
+        work = alice.request("POST", "/v1/work/claim", params={"wait_seconds": 3})
+    finally:
+        timer.join()
+    assert work["request_key"] == "later"
+    assert work["state"] == "prepare_running"
+
+
+def test_long_poll_timeout_validation_and_authentication(setup):
+    store, app, bridge, alice, bob = setup
+    assert alice.request("POST", "/v1/work/claim", params={"wait_seconds": 1}) is None
+    assert ALICE in store.agents()
+    for value in (-1, 181):
+        assert alice.http.post("/v1/work/claim", params={"wait_seconds": value}).status_code == 422
+    assert TestClient(app).post("/v1/work/claim?wait_seconds=180").status_code == 401
+
+
+def test_worker_long_poll_extends_only_claim_timeout(tmp_path):
+    calls = []
+
+    class Relay:
+        def request(self, method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            return None
+
+    worker = Worker(Relay(), None, None, tmp_path, wait_seconds=180)
+    assert not worker.once()
+    assert calls == [("POST", "/v1/work/claim", {"params": {"wait_seconds": 180}, "timeout": 200})]
+    with pytest.raises(ValueError):
+        Worker(Relay(), None, None, tmp_path, wait_seconds=181)
+
+
+def test_worker_transport_retries_back_off_and_reset_after_success(tmp_path, monkeypatch):
+    worker = Worker(None, None, None, tmp_path)
+    outcomes = iter([RuntimeError(), RuntimeError(), False, RuntimeError()])
+    delays = []
+
+    def once():
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def sleep(seconds):
+        delays.append(seconds)
+        if len(delays) == 4:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(worker, "once", once)
+    monkeypatch.setattr("tacit.worker.time.sleep", sleep)
+    with pytest.raises(KeyboardInterrupt):
+        worker.run()
+    assert delays == [5, 10, 2, 5]
 
 
 def test_codex_adapter_uses_real_cli_contract_and_separates_credentials(monkeypatch, tmp_path):
