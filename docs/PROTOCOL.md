@@ -24,12 +24,14 @@ Slack `team_id:trigger_id`를 요청 키로 사용한다. 같은 키의 재접�
 | `GET /v1/agents` | connector | 등록 사용자와 마지막 poll 시각 |
 | `POST /v1/exchanges` | connector | `request_key`, `sender`, `recipient`, `text`로 작업 등록 |
 | `GET /v1/exchanges/latest?owner=...&exchange_id=...` | connector | 해당 수신자의 최근 또는 특정 결과 조회 |
-| `POST /v1/work/claim` | worker | 자기 작업 하나를 임대하거나 JSON null 반환 |
+| `POST /v1/work/claim?wait_seconds=180` | worker | 자기 작업 하나를 임대하거나 최대 대기 후 JSON null 반환 |
 | `POST /v1/work/{id}` | worker | `lease`, `action`, `value`로 단계 결과 제출 |
 | `GET /v1/notifications` | connector | 아직 알리지 않은 완료·실패 결과 |
 | `POST /v1/notifications/{id}/ack` | connector | Slack 전송 완료 기록 |
 
 `action`은 `source`, `context`, `result`, `error` 중 하나다. `source`의 value는 `{"channel":"D...","ts":"..."}`이며 나머지는 문자열이다. 현재 모델 출력은 자연어 패킷이며 구조화된 지식 스키마는 후속 고도화 범위다.
+
+`wait_seconds`는 선택 항목으로 0~180초이며 생략하면 기존처럼 즉시 반환한다. 대기 중 서버는 약 1초마다 할당 가능한 작업을 확인하며, HTTP 연결 종료도 감지한다. 클라이언트의 해당 요청 timeout은 대기 시간보다 길어야 한다. 현재 CLI worker는 원격 URL에 180초, loopback에 0초를 기본 적용하며 `TACIT_CLAIM_WAIT_SECONDS`로 조절할 수 있다. 인증된 대기 중에는 heartbeat를 갱신한다. 전송 장애 시 재시도 간격은 5초에서 최대 300초까지 늘어나고 연결 성공 후 초기화된다.
 
 ## 저장과 재시도
 

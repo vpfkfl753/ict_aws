@@ -60,9 +60,12 @@ uv run tacit --env-file .tacit/setup/owner.env doctor --probe
 
 ## 3. 두 머신이 같은 중계 서버에 접속
 
+고정 외부 HTTPS 경로: `https://floral-establish-diffuser.ngrok-free.dev`.
+재용 머신의 배포용 `peer.env`에는 이 주소를 반영했다. 성원 머신도 본인의 `peer.env`를 이 주소로 변경하고 최신 코드를 받아 worker를 다시 실행한다. SSH 설정은 필요 없다. 같은 ngrok 계정의 지정 도메인을 사용하므로 중앙 서비스를 재시작해도 주소를 바꾸지 않는다. 재용 머신과 중앙 서비스는 켜져 있어야 한다.
+
 중계 서버 프로세스는 재용 머신, 팀의 개발 서버 또는 호스팅 환경 중 한 곳에서 실행한다. 원격에서 직접 사용할 때에는 HTTPS로 노출한다. 원격 평문 HTTP 주소는 실행기가 거부한다.
 
-가장 먼저 확인할 수 있는 방식은 **SSH 터널**이다. 성원 머신에서 재용 머신 또는 중계 호스트에 SSH 접속이 이미 가능하다면:
+ngrok 대신 사용할 수 있는 대안은 **SSH 터널**이다. 성원 머신에서 재용 머신 또는 중계 호스트에 SSH 접속이 이미 가능하다면:
 
 ```bash
 ssh -N -L 8765:127.0.0.1:8765 SSH_USER@RELAY_HOST
@@ -70,23 +73,19 @@ ssh -N -L 8765:127.0.0.1:8765 SSH_USER@RELAY_HOST
 
 이 경우 성원 `peer.env`의 `TACIT_RELAY_URL`도 `http://127.0.0.1:8765`로 둔다. 로컬 HTTP가 SSH로 암호화되어 중계 호스트의 loopback 서버에 연결된다. 다른 앱이 8765를 사용하면 터널의 첫 포트를 바꾸고 설정도 맞춘다.
 
-SSH 접속 경로가 없다면 공통 HTTPS 주소를 제공하는 호스트나 HTTPS 터널을 준비한 뒤, 원격 클라이언트들의 `TACIT_RELAY_URL`을 그 주소로 변경한다. 배포 계정과 호스트는 아직 지정되지 않았으며 자동으로 외부 배포하지 않는다.
+현재는 재용 머신의 loopback 서버를 ngrok HTTPS 터널에 연결했다. 다른 중앙 머신으로 이전할 때에도 같은 ngrok 계정·도메인을 사용하면 공개 주소를 유지할 수 있다. 기존 중앙 서비스를 먼저 내려 중복 연결을 피한다.
 
 중계 서버의 공개 주소는 Slack 이벤트 수신 주소가 아니다. Slack 커넥터는 Socket Mode로 Slack에 접속한다. 두 Agent 사이의 맥락은 Slack을 통과하지 않는다.
 
 ## 4. 프로세스 시작
 
-중계 호스트:
+중계 호스트인 재용 머신에는 사용자 systemd 서비스가 설치되어 있다. 중계 서버·Slack 커넥터·ngrok을 함께 켠다:
 
 ```bash
-uv run tacit --env-file .tacit/setup/relay.env relay
+tacit-server on
 ```
 
-Slack 커넥터는 팀에서 하나만:
-
-```bash
-uv run tacit --env-file .tacit/setup/slack.env slack
-```
+별도의 `relay`, `slack`, `ngrok` 프로세스를 중복 실행하지 않는다. `tacit-server off`로 중앙 서비스를 끈다. 처음 중앙 머신을 구성하는 절차는 [중앙 서버 운영](RELAY_TUNNEL.md)을 따른다.
 
 재용 머신:
 
@@ -103,6 +102,8 @@ uv run tacit --env-file .tacit/setup/peer.env worker
 Slack에서 `/tacit-status`로 두 Agent가 최근 연결되었는지 확인한다. 한쪽이 꺼져 있으면 작업은 대기한다. 동일 사용자의 worker를 여러 개 켜지 않는다.
 
 ## 5. 첫 통신의 완료 조건
+
+`/tacit-send`만 실행해 전송 창에서 상대와 메시지를 입력해도 된다. 멘션을 인식하지 못하면 같은 창이 열리므로 상대를 선택하고 내용을 확인한 뒤 전송한다.
 
 - [ ] 재용이 `/tacit-send @우성원 이번 결과 baseline이랑 비교해봤어?`를 실행한다.
 - [ ] 성원과의 기존 1:1 DM에 재용 명의의 원문이 도착한다.

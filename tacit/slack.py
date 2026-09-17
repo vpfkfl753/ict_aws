@@ -6,6 +6,8 @@ import time
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+from tacit.slack_compose import compose_view, register_compose
+
 log = logging.getLogger(__name__)
 
 
@@ -29,7 +31,7 @@ def render(exchange):
 
 def register_handlers(app, relay, team):
     @app.command("/tacit-send")
-    def send(ack, command, respond):
+    def send(ack, command, respond, client):
         ack()
         log.info("Received /tacit-send team=%s user=%s", command["team_id"], command["user_id"])
         if command["team_id"] != team:
@@ -37,6 +39,22 @@ def register_handlers(app, relay, team):
             return
         try:
             recipient, text = parse_send(command["text"])
+        except ValueError:
+            if len(command["text"]) > 3000:
+                respond(
+                    "메시지를 3000자 이내로 입력하거나 /tacit-send @상대 메시지 형식으로 보내주세요."
+                )
+                return
+            try:
+                client.views_open(
+                    trigger_id=command["trigger_id"], view=compose_view(command["text"])
+                )
+                log.info("Opened compose modal user=%s", command["user_id"])
+            except Exception as exc:
+                log.error("Compose modal could not open (%s)", type(exc).__name__)
+                respond("전송 창을 열지 못했습니다. /tacit-send를 다시 실행해주세요.")
+            return
+        try:
             exchange = relay.request(
                 "POST",
                 "/v1/exchanges",
@@ -119,6 +137,7 @@ def run_slack(relay, bot_token, app_token, team):
     if app.client.auth_test()["team_id"] != team:
         raise ValueError("SLACK_BOT_TOKEN does not belong to TACIT_TEAM_ID")
     register_handlers(app, relay, team)
+    register_compose(app, relay, team)
     stop = threading.Event()
 
     def notifications():

@@ -30,11 +30,14 @@ class SlackSender:
 
 
 class Worker:
-    def __init__(self, relay, provider, sender, state_dir: Path):
+    def __init__(self, relay, provider, sender, state_dir: Path, wait_seconds=0):
+        if not 0 <= wait_seconds <= 180:
+            raise ValueError("TACIT_CLAIM_WAIT_SECONDS must be between 0 and 180")
         self.relay = relay
         self.provider = provider
         self.sender = sender
         self.state_dir = state_dir
+        self.wait_seconds = wait_seconds
         state_dir.mkdir(parents=True, exist_ok=True)
 
     def cached(self, exchange, key, produce):
@@ -56,7 +59,13 @@ class Worker:
         )
 
     def once(self):
-        exchange = self.relay.request("POST", "/v1/work/claim")
+        options = {}
+        if self.wait_seconds:
+            options = {
+                "params": {"wait_seconds": self.wait_seconds},
+                "timeout": self.wait_seconds + 20,
+            }
+        exchange = self.relay.request("POST", "/v1/work/claim", **options)
         if exchange is None:
             return False
         stage = exchange["state"].split("_")[0]
@@ -88,6 +97,7 @@ class Worker:
 
     def run(self):
         connected = False
+        retry_seconds = 5
         while True:
             try:
                 worked = self.once()
@@ -96,7 +106,13 @@ class Worker:
                     connected = True
                 if not worked:
                     time.sleep(2)
+                retry_seconds = 5
             except Exception as exc:
                 connected = False
-                log.error("Relay unavailable (%s); retrying in 5 seconds", type(exc).__name__)
-                time.sleep(5)
+                log.error(
+                    "Relay unavailable (%s); retrying in %s seconds",
+                    type(exc).__name__,
+                    retry_seconds,
+                )
+                time.sleep(retry_seconds)
+                retry_seconds = min(300, retry_seconds * 2)
