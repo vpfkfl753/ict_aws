@@ -1,10 +1,13 @@
+import asyncio
 import hmac
 import json
 import os
+import time
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from tacit.store import Conflict, Store
 
@@ -78,8 +81,17 @@ def create_app(store=None, members=None, bridge_token=None):
         return store.latest(owner, exchange_id)
 
     @app.post("/v1/work/claim")
-    def claim(owner=Depends(agent)):
-        return store.claim(owner)
+    async def claim(
+        request: Request, wait_seconds: int = Query(default=0, ge=0, le=180), owner=Depends(agent)
+    ):
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            if await request.is_disconnected():
+                return None
+            work = await run_in_threadpool(store.claim, owner)
+            if work is not None or time.monotonic() >= deadline:
+                return work
+            await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
 
     @app.post("/v1/work/{exchange_id}")
     def update(exchange_id: str, body: Update, owner=Depends(agent)):
