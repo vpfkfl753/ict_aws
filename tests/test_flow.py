@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tacit.relay import create_app
-from tacit.slack import notify_once, parse_send, register_handlers
+from tacit.slack import notify_once, parse_send, register_handlers, watch_connection
 from tacit.store import Store
 from tacit.worker import Worker
 
@@ -228,6 +228,67 @@ def test_parse_send():
     assert parse_send("<@U123|name> hello\nworld") == ("U123", "hello\nworld")
     with pytest.raises(ValueError):
         parse_send("@name hello")
+
+
+class FakeSocketMode:
+    """Socket Mode client that reports connectivity and replays connection errors."""
+
+    def __init__(self, connected, failing):
+        self.on_error_listeners = []
+        self.connected = connected
+        self.failing = failing
+
+    def is_connected(self):
+        return self.connected
+
+    def tick(self):
+        if self.failing:
+            for listener in self.on_error_listeners:
+                listener(BrokenPipeError(32, "Broken pipe"))
+
+
+def drive(client, monkeypatch, ticks):
+    """Run the watchdog over a fake clock and return what it did."""
+    clock = [0.0]
+    monkeypatch.setattr("tacit.slack.time.monotonic", lambda: clock[0])
+    remaining = [ticks]
+    stalled = []
+
+    class Clock:
+        def wait(self, seconds):
+            clock[0] += seconds
+            client.tick()
+            remaining[0] -= 1
+            return remaining[0] <= 0
+
+    watch_connection(client, Clock(), lambda: stalled.append(clock[0]), stall_seconds=120)
+    return stalled
+
+
+def test_watchdog_exits_when_reconnects_never_carry_traffic(monkeypatch):
+    # The wedged service looked connected at each sample yet errored every attempt.
+    stalled = drive(FakeSocketMode(connected=True, failing=True), monkeypatch, ticks=100)
+    assert stalled == [120.0]
+
+
+def test_watchdog_leaves_a_working_connection_alone(monkeypatch):
+    assert drive(FakeSocketMode(connected=True, failing=False), monkeypatch, ticks=100) == []
+
+
+def test_watchdog_tolerates_a_brief_reconnect(monkeypatch):
+    client = FakeSocketMode(connected=False, failing=False)
+    clock = [0.0]
+    monkeypatch.setattr("tacit.slack.time.monotonic", lambda: clock[0])
+    stalled = []
+
+    class Clock:
+        def wait(self, seconds):
+            clock[0] += seconds
+            client.connected = clock[0] >= 15
+            return clock[0] >= 600
+
+    watch_connection(client, Clock(), lambda: stalled.append(clock[0]), stall_seconds=120)
+    assert stalled == []
 
 
 def test_long_poll_delivers_new_work_without_waiting_for_deadline(setup):
