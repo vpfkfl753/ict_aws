@@ -22,7 +22,15 @@ class Submit(BaseModel):
 class WorkUpdate(BaseModel):
     lease: str = Field(min_length=1)
     action: Literal[
-        "source", "approval", "publish", "question", "answer", "ask_user", "result", "error"
+        "source",
+        "approval",
+        "publish",
+        "question",
+        "answer",
+        "ask_user",
+        "result",
+        "error",
+        "auto_share",
     ]
     value: str | dict[str, str] = ""
 

@@ -14,6 +14,7 @@ DEFAULT_SETTINGS = {
     "web": False,
     "auto_receive": True,
     "auto_send": False,
+    "auto_share": False,
 }
 
 
@@ -46,7 +47,7 @@ class Workflow:
                     raise Conflict("Unknown backend")
                 if any(
                     not isinstance(value.get(k, False), bool)
-                    for k in ("web", "auto_send", "auto_receive")
+                    for k in ("web", "auto_send", "auto_receive", "auto_share")
                 ):
                     raise Conflict("Boolean preference required")
                 if any(
@@ -59,7 +60,7 @@ class Workflow:
                     (owner, json.dumps({**DEFAULT_SETTINGS, **value})),
                 )
             row = db.execute("SELECT body FROM preferences WHERE owner=?", (owner,)).fetchone()
-            return json.loads(row[0]) if row else dict(DEFAULT_SETTINGS)
+            return {**DEFAULT_SETTINGS, **json.loads(row[0])} if row else dict(DEFAULT_SETTINGS)
 
     @staticmethod
     def event(task, kind, actor, text=""):
@@ -70,6 +71,7 @@ class Workflow:
                 "actor": actor,
                 "text": text,
                 "at": time.time(),
+                "version": task.get("version", 0),
             }
         )
 
@@ -259,6 +261,8 @@ class Workflow:
                             "owner": owner,
                             "seq": e["seq"],
                             "kind": e["kind"],
+                            "actor": e["actor"],
+                            "event_version": e.get("version"),
                             "text": text,
                             "card": card_snapshot(t, owner, auto_receive),
                             "thread": delivered.get("thread"),
@@ -309,6 +313,33 @@ class Workflow:
                     raise Conflict("Original already sent")
                 t["source"] = value
                 self.event(t, "original_sent", actor)
+            elif (
+                action == "auto_share"
+                and lease
+                and (
+                    stage in {"prepare", "reply"} or (stage == "interpret" and t["mode"] == "agent")
+                )
+            ):
+                preference = db.execute(
+                    "SELECT body FROM preferences WHERE owner=?", (actor,)
+                ).fetchone()
+                if not preference or json.loads(preference[0]).get("auto_share") is not True:
+                    raise Conflict("Automatic sharing is disabled")
+                if not isinstance(value, str) or not value.strip() or len(value) > 5000:
+                    raise Conflict("Shared text must be 1–5000 characters")
+                if stage == "prepare" and t["mode"] == "dm" and not t["source"]:
+                    raise Conflict("Original must precede context")
+                t.update(
+                    version=t["version"] + 1, digest=hashlib.sha256(value.encode()).hexdigest()
+                )
+                self.event(t, "auto_shared", actor)
+                if stage == "interpret":
+                    t.update(result=value, state="completed", owner=t["sender"])
+                    self.event(t, "agent_result", actor, value)
+                else:
+                    key = "context" if stage == "prepare" else "answer"
+                    t.update({key: value, "state": "interpret_pending", "owner": t["recipient"]})
+                    self.event(t, key, actor, value)
             elif (
                 action == "approval"
                 and lease
