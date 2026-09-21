@@ -65,3 +65,27 @@ def test_peer_can_check_own_identity_without_connector_tokens(tmp_path, actual_o
     findings = check(tmp_path / "missing-slack.env", worker, Client, worker_only=True)
     assert [finding["check"] for finding in findings] == ["configuration", "SLACK_USER_TOKEN"]
     assert findings[-1]["ok"] is ok
+
+
+@pytest.mark.parametrize(
+    "scopes,ok", [("chat:write,im:write", False), ("chat:write,im:write,im:read,im:history", True)]
+)
+def test_v2_check_requires_reauthorized_scopes(tmp_path, scopes, ok):
+    worker = tmp_path / "peer.env"
+    write_env(worker, {"TACIT_TEAM_ID": "T1", "TACIT_OWNER": "U1", "SLACK_USER_TOKEN": "user"})
+
+    class Response(dict):
+        headers = {"x-oauth-scopes": scopes}
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def auth_test(self):
+            return Response(team_id="T1", user_id="U1")
+
+    findings = check(tmp_path / "unused", worker, Client, worker_only=True, protocol=2)
+    assert findings[-1]["ok"] is ok
+    if not ok:
+        assert "im:history" in findings[-1]["detail"]
+        assert "im:read" in findings[-1]["detail"]

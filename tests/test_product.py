@@ -1,5 +1,6 @@
 import hashlib
 import json
+import threading
 import time
 
 import pytest
@@ -369,6 +370,172 @@ def test_notice_survives_restart_after_approval_transition(system, tmp_path, mon
     assert len(slack.messages) == 1
     restarted.flush_notices()
     assert len(slack.messages) == 1
+
+
+def test_idle_worker_uses_one_180_second_request(tmp_path):
+    calls = []
+
+    class Relay:
+        def request(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return {"work": None, "requests": []}
+
+    worker = ProductWorker(
+        Relay(),
+        Model(tmp_path),
+        Slack(),
+        tmp_path / "state",
+        owner="UA",
+        allowed_roots=[tmp_path],
+        bot_user="UBOT",
+    )
+    assert not worker.once()
+    assert calls == [
+        (
+            ("POST", "/v2/work/claim"),
+            {
+                "params": {"wait_seconds": 180, "include_requests": True},
+                "timeout": 200,
+            },
+        )
+    ]
+    with pytest.raises(ValueError):
+        ProductWorker(
+            Relay(),
+            Model(tmp_path),
+            Slack(),
+            tmp_path / "state",
+            owner="UA",
+            allowed_roots=[tmp_path],
+            bot_user="UBOT",
+            wait_seconds=181,
+        )
+
+
+def test_v2_claim_accepts_180_and_keeps_old_response_shape(system):
+    _, flow, _, agents = system
+    task = create(flow)
+    assert (
+        agents["UA"].request("POST", "/v2/work/claim", params={"wait_seconds": 180})["id"]
+        == task["id"]
+    )
+    assert agents["UB"].request("POST", "/v2/work/claim") is None
+    for value in (-1, 181):
+        assert (
+            agents["UA"].http.post("/v2/work/claim", params={"wait_seconds": value}).status_code
+            == 422
+        )
+    assert (
+        agents["UA"]
+        .http.post("/v2/work/claim", headers={"Authorization": "Bearer invalid"})
+        .status_code
+        == 401
+    )
+
+
+@pytest.mark.parametrize("kind", ["work", "audit"])
+def test_combined_long_poll_wakes_for_work_or_own_audit(system, kind):
+    _, flow, _, agents = system
+    task = draft(flow, create(flow))
+    # Another owner's pending request must not wake this worker.
+    flow.request_audit("UB", task["id"])
+    action = (
+        (lambda: create(flow, "later"))
+        if kind == "work"
+        else (lambda: flow.request_audit("UA", task["id"]))
+    )
+    timer = threading.Timer(0.1, action)
+    timer.start()
+    started = time.monotonic()
+    try:
+        batch = agents["UA"].request(
+            "POST", "/v2/work/claim", params={"wait_seconds": 4, "include_requests": True}
+        )
+    finally:
+        timer.join()
+    assert time.monotonic() - started < 3
+    if kind == "work":
+        assert batch["work"]["state"] == "prepare_running"
+        assert batch["requests"] == []
+    else:
+        assert batch["work"] is None
+        assert len(batch["requests"]) == 1
+        assert batch["requests"][0]["owner"] == "UA"
+
+
+def test_combined_poll_audit_delivery_and_ack_do_not_lease_work(system, tmp_path):
+    _, flow, _, agents = system
+    task = create(flow)
+    flow.request_audit("UA", task["id"])
+    slack = Slack()
+    worker = ProductWorker(
+        agents["UA"],
+        Model(tmp_path),
+        slack,
+        tmp_path / "state",
+        owner="UA",
+        allowed_roots=[tmp_path],
+        bot_user="UBOT",
+        wait_seconds=0,
+    )
+    assert worker.once()
+    assert len(slack.messages) == 1
+    assert flow.local_requests("UA") == []
+    assert flow.get("UA", task["id"])["state"] == "prepare_pending"
+
+
+def test_combined_poll_deadline_returns_empty_envelope(system):
+    _, _, _, agents = system
+    start = time.monotonic()
+    batch = agents["UA"].request(
+        "POST", "/v2/work/claim", params={"wait_seconds": 1, "include_requests": True}
+    )
+    assert batch == {"work": None, "requests": []}
+    assert 0.9 <= time.monotonic() - start < 3
+
+
+@pytest.mark.parametrize("mode", ["dm", "agent"])
+def test_updated_workers_complete_both_directions_with_approval(
+    system, tmp_path, monkeypatch, mode
+):
+    _, flow, bridge, agents = system
+    monkeypatch.setattr("tacit.product_worker.create_provider", lambda *args: Model(tmp_path))
+    slack = Slack()
+    workers = {
+        u: ProductWorker(
+            agents[u],
+            Model(tmp_path),
+            slack,
+            tmp_path / u,
+            owner=u,
+            allowed_roots=[tmp_path],
+            bot_user="UBOT",
+            wait_seconds=0,
+        )
+        for u in ("UA", "UB")
+    }
+    for sender, recipient in (("UA", "UB"), ("UB", "UA")):
+        task = flow.create(sender + mode, sender, recipient, "test context", mode)
+        assert workers[sender].once()
+        assert flow.get(sender, task["id"])["state"] == "approval_wait"
+        assert not workers[recipient].once()
+        bridge.request(
+            "POST",
+            "/v2/decisions/" + task["id"],
+            json={"owner": sender, "version": 1, "action": "approve"},
+        )
+        assert workers[sender].once()
+        assert workers[recipient].once()
+        if mode == "agent":
+            assert flow.get(sender, task["id"])["state"] == "approval_wait"
+            bridge.request(
+                "POST",
+                "/v2/decisions/" + task["id"],
+                json={"owner": recipient, "version": 2, "action": "approve"},
+            )
+            assert workers[recipient].once()
+        assert flow.get(recipient, task["id"])["state"] == "completed"
+    assert len(slack.originals) == (2 if mode == "dm" else 0)
 
 
 def test_corpus_excludes_credentials_symlinks_and_can_find_late_files(tmp_path):
