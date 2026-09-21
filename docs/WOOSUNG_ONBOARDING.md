@@ -1,5 +1,8 @@
 # 우성원 에이전트 연결
 
+2026-09-21 갱신: 대회 Kiro 로그인 후 이 머신의 `TACIT_BACKEND=kiro`로 실제 Slack 송신
+맥락 생성을 확인했다. [검증 기록](KIRO_VALIDATION.md). 아래 9월 15일 상태는 당시 기록이다.
+
 이 문서는 우성원 머신에서 기존 재용 중계 서버에 연결하는 순서다.
 전체 구성은 [첫 연결 가이드](FIRST_CONTACT.md), 실행기 로그인은
 [Kiro/OpenCode 가이드](../tacit_runtime/README.md)를 참고한다.
@@ -62,7 +65,7 @@ TACIT_BACKEND=codex
 
 처음에는 작은 예제 폴더로 연결을 확인한다. 실제 자료 폴더는 이후 지정한다.
 Kiro나 OpenCode를 선택할 수도 있으며, OpenCode에는 `TACIT_MODEL=openai/<model>`이 필요하다.
-현재 이 머신은 OpenCode 재로그인 및 Kiro 로그인이 필요하다고 앞선 실행에서 확인했다.
+2026-09-21 이 머신의 Kiro 로그인과 실제 송신 응답을 확인했다. OpenCode는 앞선 OAuth 갱신 실패 이후 재검증하지 않았다.
 설정 파일은 `chmod 600 .tacit/setup/peer.env`로 제한하고 Git에 넣지 않는다.
 
 ## 3. 본인 토큰과 모델 확인
