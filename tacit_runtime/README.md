@@ -1,6 +1,6 @@
 # Tacit: Kiro / OpenCode 실행기
 
-확인일: 2026-09-15. Slack 및 Agent Plane 구현 담당자가 호출하는 로컬 Python 연결 모듈이다.
+확인일: 2026-09-21. Slack 및 Agent Plane 구현 담당자가 호출하는 로컬 Python 연결 모듈이다.
 
 통합 후 `tacit worker`와 `tacit doctor --probe`에서도 `TACIT_BACKEND=kiro|opencode`로 선택할 수 있다. 기본값 `codex`는 기존 직접 CLI 경로를 사용한다. 워커 연결 코드는 `tacit/provider.py`에 있으며, 각 exchange의 요청마다 새 ACP 세션을 연다.
 
@@ -24,11 +24,11 @@ Slack / Agent Plane
 | 프로젝트 내부 Kiro CLI 설치 | 2.21.4, `.tools/kirocli/bin/`; 공식 manifest SHA256 확인 |
 | OpenCode ACP 초기화·세션 생성·모델 지정 | 실제 실행 성공 |
 | OpenCode ChatGPT 모델 호출 | 저장된 OAuth 토큰 갱신이 401로 실패; 재로그인 필요 |
-| Kiro 로그인 | `whoami`: Not logged in |
-| Kiro ACP 실제 모델 응답 | 미검증; 대회 계정 로그인 필요 |
+| Kiro 로그인 | 대회 계정의 IAM Identity Center 로그인 확인 (2026-09-21) |
+| Kiro ACP 실제 모델 응답 | 실제 Slack 명령에서 송신 맥락 생성과 `prepare completed` 확인 |
 | 프로토콜/오류/종료 테스트 | 가짜 ACP 프로세스를 사용한 8개 테스트 통과 |
 
-현재 Kiro/OpenCode 구독 기반 모델 호출 성공이나 실제 Slack 연결 완료를 의미하지 않는다. 워커와의 코드 연결 및 혼합 실행기 모의 흐름 테스트는 완료했다.
+Kiro는 실제 Tacit 송신 경로에서 응답 생성을 확인했다. 수신 방향과 상대 봇 DM의 결과 확인은 별도이며, OpenCode 모델 호출은 이전 401 이후 재검증하지 않았다. [Kiro 실제 검증 기록](../docs/KIRO_VALIDATION.md)을 참고한다.
 기존 Codex 로그인 정보는 복사하거나 변경하지 않았다. 전역 실행파일과 셸 설정도 변경하지 않았다.
 
 ## 1. 각 구독으로 로그인
@@ -136,6 +136,5 @@ API key의 구독 경로 대체 방지를 검증한다. 실제 계정 인증 테
 - [Kiro 인증 및 구독 크레딧](https://kiro.dev/docs/getting-started/authentication/)
 - [ACP prompt/응답 규격](https://agentclientprotocol.com/protocol/v1/prompt-turn)
 
-Kiro 설명 페이지의 일부 예시는 `content`/`session/notification`을 사용하지만,
 연결 모듈은 ACP v1의 `prompt`/`session/update`를 따른다.
-Kiro 계정 로그인 후 설치된 2.21.4의 실제 이벤트와 최종 대조해야 한다.
+2026-09-21 설치된 Kiro CLI 2.21.4에서 이 경로로 실제 응답 수신과 정상 턴 종료를 확인했다.
