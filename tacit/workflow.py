@@ -32,6 +32,9 @@ class Workflow:
                 CREATE TABLE IF NOT EXISTS local_requests (
                     id TEXT PRIMARY KEY, owner TEXT NOT NULL,
                     task TEXT NOT NULL, state TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS preview_requests (
+                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, task TEXT NOT NULL,
+                    version INTEGER NOT NULL, state TEXT NOT NULL);
             """)
 
     def settings(self, owner, value=None):
@@ -171,7 +174,7 @@ class Workflow:
                 for r in db.execute("SELECT body FROM workflows ORDER BY created DESC")
             ]
         return [
-            {k: t[k] for k in ("id", "sender", "recipient", "state", "created")}
+            {k: t[k] for k in ("id", "sender", "recipient", "state", "created", "text")}
             for t in tasks
             if owner in (t["sender"], t["recipient"])
         ][:20]
@@ -193,7 +196,17 @@ class Workflow:
                 db.execute(
                     "UPDATE local_requests SET state='done' WHERE owner=? AND id=?", (owner, done)
                 )
-            return [
+                db.execute(
+                    "UPDATE preview_requests SET state='done' WHERE owner=? AND id=?", (owner, done)
+                )
+            previews = [
+                {**dict(row), "kind": "preview"}
+                for row in db.execute(
+                    "SELECT * FROM preview_requests WHERE owner=? AND state='pending' LIMIT 10",
+                    (owner,),
+                )
+            ]
+            return previews + [
                 dict(row)
                 for row in db.execute(
                     "SELECT * FROM local_requests WHERE owner=? AND state='pending' LIMIT 10",
@@ -201,7 +214,26 @@ class Workflow:
                 )
             ]
 
+    def request_preview(self, owner, task_id, version):
+        task = self.get(owner, task_id)
+        if (
+            not task
+            or task["owner"] != owner
+            or task["version"] != version
+            or task["state"] not in {"approval_wait", "user_wait"}
+        ):
+            raise Conflict("This preview is no longer available")
+        request_id = str(uuid.uuid4())
+        with self.store.db() as db:
+            db.execute(
+                "INSERT INTO preview_requests VALUES (?, ?, ?, ?, 'pending')",
+                (request_id, owner, task_id, version),
+            )
+        return {"id": request_id}
+
     def deliveries(self):
+        from tacit.presentation import card_snapshot
+
         with self.store.db() as db:
             tasks = [
                 json.loads(r[0]) for r in db.execute("SELECT body FROM workflows ORDER BY created")
@@ -213,14 +245,14 @@ class Workflow:
                 for e in t["events"]:
                     if e["seq"] <= delivered.get("seq", 0):
                         continue
-                    if e["kind"] in {"user_question", "user_answer"}:
+                    if e["kind"] in {"user_question", "user_answer"} and owner != t["recipient"]:
                         continue
-                    if e["kind"] == "result" and (
-                        owner != t["recipient"]
-                        or (t["mode"] != "agent" and not self.settings(owner)["auto_receive"])
-                    ):
+                    if e["kind"] == "result" and owner != t["recipient"]:
                         continue
                     text = t["result"] if e["kind"] == "result" else e["text"]
+                    auto_receive = self.settings(owner)["auto_receive"]
+                    if e["kind"] == "result" and not auto_receive:
+                        text = "설명이 준비됐어요. /tacit-receive로 확인할 수 있어요."
                     items.append(
                         {
                             "id": t["id"],
@@ -228,6 +260,7 @@ class Workflow:
                             "seq": e["seq"],
                             "kind": e["kind"],
                             "text": text,
+                            "card": card_snapshot(t, owner, auto_receive),
                             "thread": delivered.get("thread"),
                         }
                     )
