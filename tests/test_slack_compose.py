@@ -1,4 +1,5 @@
 import httpx
+import pytest
 
 from tacit.slack import register_handlers
 from tacit.slack_compose import register_compose
@@ -112,3 +113,72 @@ def test_failed_submission_restores_inputs_and_request_key():
     restored = slack.updated[0]["view"]
     assert restored["private_metadata"] == "unique-request"
     assert restored["blocks"][-1]["element"]["initial_value"] == "hello"
+
+
+@pytest.mark.parametrize("failure", ["api", "channel", "bot", "malformed", "next_page", "empty"])
+def test_v2_unknown_conversation_never_dispatches(failure):
+    app, replies, dispatched = App(), [], []
+
+    class Members:
+        def conversations_members(self, **kwargs):
+            if failure == "malformed":
+                return {}
+            if failure == "empty":
+                return {"members": []}
+            if failure == "next_page" and "cursor" not in kwargs:
+                return {"members": ["UA"], "response_metadata": {"next_cursor": "next"}}
+            raise RuntimeError("lookup failed")
+
+    class Relay:
+        def request(self, *args, **kwargs):
+            dispatched.append(kwargs)
+            return {"id": "unexpected"}
+
+    register_handlers(app, Relay(), "T1", protocol=2, bot_user=None if failure == "bot" else "UBOT")
+    app.handlers["/tacit-send"](
+        ack=lambda: None,
+        command={
+            "team_id": "T1",
+            "user_id": "UA",
+            "trigger_id": "trigger",
+            "channel_id": None if failure == "channel" else "D1",
+            "text": "<@UB> hello",
+        },
+        respond=replies.append,
+        client=Members(),
+    )
+    assert dispatched == []
+    assert "전송을 중단" in replies[0]
+
+
+@pytest.mark.parametrize("mode", ["agent", "dm", "broadcast", "paginated"])
+def test_v2_confirmed_conversation_preserves_delivery_mode(mode):
+    app, sent = App(), []
+
+    class Members:
+        def conversations_members(self, **kwargs):
+            assert mode != "broadcast"
+            if mode == "paginated" and "cursor" not in kwargs:
+                return {"members": ["UA"], "response_metadata": {"next_cursor": "next"}}
+            return {"members": ["UA", "UBOT" if mode != "dm" else "UB"]}
+
+    class Relay:
+        def request(self, method, path, **kwargs):
+            sent.append(kwargs["json"])
+            return {"id": "accepted"}
+
+    register_handlers(app, Relay(), "T1", protocol=2, bot_user="UBOT")
+    app.handlers["/tacit-send"](
+        ack=lambda: None,
+        command={
+            "team_id": "T1",
+            "user_id": "UA",
+            "trigger_id": "trigger",
+            "channel_id": "D1",
+            "text": "@broadcast hello" if mode == "broadcast" else "<@UB> hello",
+        },
+        respond=lambda response: None,
+        client=Members(),
+    )
+    assert len(sent) == 1
+    assert sent[0]["mode"] == ("dm" if mode == "dm" else "agent")

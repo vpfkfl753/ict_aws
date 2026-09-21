@@ -2,7 +2,7 @@ import asyncio
 import time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -169,13 +169,27 @@ def register_workflow(app, store, members, bridge, agent):
         )
 
     @router.post("/work/claim")
-    async def claim(wait_seconds: int = Query(default=0, ge=0, le=30), owner=Depends(agent)):
+    async def claim(
+        request: Request,
+        wait_seconds: int = Query(default=0, ge=0, le=180),
+        include_requests: bool = False,
+        owner=Depends(agent),
+    ):
         deadline = time.monotonic() + wait_seconds
         while True:
+            if await request.is_disconnected():
+                return None
+            # Audit requests wake the same long poll without leasing model work
+            # while a local Slack notice is still being delivered.
+            requests = (
+                await run_in_threadpool(flow.local_requests, owner) if include_requests else []
+            )
+            if requests:
+                return {"work": None, "requests": requests}
             work = await run_in_threadpool(flow.claim, owner)
             if work is not None or time.monotonic() >= deadline:
-                return work
-            await asyncio.sleep(1)
+                return {"work": work, "requests": []} if include_requests else work
+            await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
 
     @router.get("/work/{task_id}")
     def read_work(task_id: str, owner=Depends(agent)):

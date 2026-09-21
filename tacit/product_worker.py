@@ -33,9 +33,18 @@ def action_button(label, action, task, version):
 
 class ProductWorker(Worker):
     def __init__(
-        self, relay, provider, sender, state_dir, *, owner, allowed_roots, bot_user, wait_seconds=30
+        self,
+        relay,
+        provider,
+        sender,
+        state_dir,
+        *,
+        owner,
+        allowed_roots,
+        bot_user,
+        wait_seconds=180,
     ):
-        super().__init__(relay, provider, sender, state_dir, min(wait_seconds, 30))
+        super().__init__(relay, provider, sender, state_dir, wait_seconds)
         self.owner, self.bot_user = owner, bot_user
         self.allowed_roots = [Path(p).resolve(strict=True) for p in allowed_roots]
         self.default_workspace = provider.workspace
@@ -308,7 +317,13 @@ class ProductWorker(Worker):
 
     def once(self):
         self.flush_notices()
-        for request in self.relay.request("GET", "/v2/worker/requests"):
+        batch = self.relay.request(
+            "POST",
+            "/v2/work/claim",
+            params={"wait_seconds": self.wait_seconds, "include_requests": True},
+            timeout=self.wait_seconds + 20,
+        )
+        for request in batch["requests"]:
             path = self.state_dir / f"{request['task']}-audit.jsonl"
             if path.exists():
                 lines = path.read_text().splitlines()[-30:]
@@ -323,14 +338,9 @@ class ProductWorker(Worker):
             )
             self.flush_notices()
             self.relay.request("POST", "/v2/worker/requests/" + request["id"])
-        t = self.relay.request(
-            "POST",
-            "/v2/work/claim",
-            params={"wait_seconds": self.wait_seconds},
-            timeout=self.wait_seconds + 20,
-        )
+        t = batch["work"]
         if t is None:
-            return False
+            return bool(batch["requests"])
         try:
             self.configure()
             self.execute(t)

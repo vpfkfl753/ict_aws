@@ -8,7 +8,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError, SlackRequestError
 
 
-def check(slack_env, worker_env, client_factory=WebClient, *, worker_only=False):
+def check(slack_env, worker_env, client_factory=WebClient, *, worker_only=False, protocol=1):
     slack = {} if worker_only else dotenv_values(slack_env)
     worker = dotenv_values(worker_env)
     findings = []
@@ -48,6 +48,8 @@ def check(slack_env, worker_env, client_factory=WebClient, *, worker_only=False)
                 if key.lower() == "x-oauth-scopes":
                     scopes.update(item.strip() for item in value.split(","))
             needed = {"chat:write", "im:write"} | ({"commands"} if bot else set())
+            if protocol == 2:
+                needed |= {"im:read", "im:history"}
             missing = needed - scopes
             if not identity_matches:
                 report(name, False, "Token belongs to a different workspace, user, or token type")
@@ -92,6 +94,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--slack-env", type=Path, default=Path(".tacit/setup/slack.env"))
     parser.add_argument("--worker-env", type=Path, default=Path(".tacit/setup/owner.env"))
+    parser.add_argument("--protocol", type=int, choices=(1, 2), default=1)
     parser.add_argument(
         "--worker-only",
         action="store_true",
@@ -102,7 +105,9 @@ def main():
     for path in paths:
         if not path.is_file():
             parser.error(f"Configuration file not found: {path}")
-    findings = check(args.slack_env, args.worker_env, worker_only=args.worker_only)
+    findings = check(
+        args.slack_env, args.worker_env, worker_only=args.worker_only, protocol=args.protocol
+    )
     for finding in findings:
         print(f"{'OK' if finding['ok'] else 'WAIT'} {finding['check']}: {finding['detail']}")
     raise SystemExit(0 if all(finding["ok"] for finding in findings) else 1)
