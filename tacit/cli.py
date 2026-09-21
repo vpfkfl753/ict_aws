@@ -89,6 +89,9 @@ def main():
                 os.environ.get("TACIT_BACKEND", "codex"),
                 os.environ.get("TACIT_MODEL"),
             )
+            logging.getLogger(__name__).info(
+                "Worker backend=%s", os.environ.get("TACIT_BACKEND", "codex")
+            )
             owner = required("TACIT_OWNER")
             sender = SlackSender(required("SLACK_USER_TOKEN"), owner, required("TACIT_TEAM_ID"))
             worker = Worker(

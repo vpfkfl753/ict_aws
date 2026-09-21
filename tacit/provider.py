@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -7,6 +8,8 @@ from pathlib import Path
 
 from tacit.sources import read_sources
 from tacit_runtime import AgentRuntime
+
+log = logging.getLogger(__name__)
 
 
 def request_with_sources(workspace: Path, prompt: str) -> str:
@@ -44,7 +47,13 @@ class ACPProvider:
     async def _run(self, request: str) -> str:
         # A fresh session per exchange prevents context from leaking between peers.
         async with AgentRuntime(self.backend, self.workspace, model=self.model) as agent:
+            log.info("Agent inference started backend=%s", self.backend)
             result = await agent.prompt(request)
+            log.info(
+                "Agent inference finished backend=%s stop_reason=%s",
+                self.backend,
+                result.stop_reason,
+            )
             if result.stop_reason != "end_turn":
                 raise RuntimeError("Agent did not complete its response")
             return validated_response(result.text)
