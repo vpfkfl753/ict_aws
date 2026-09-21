@@ -8,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 
-from tacit.presentation import draft_blocks, plain_blocks
+from tacit.presentation import draft_blocks, plain_blocks, readable_mentions
 from tacit.provider import create_provider, prepare_prompt
 from tacit.retrieval import Researcher, object_response
 from tacit.worker import Worker
@@ -180,7 +180,7 @@ class ProductWorker(Worker):
         ).collect(message)
 
     def approval(self, task, draft):
-        draft = draft.strip()[:5000]
+        draft = readable_mentions(draft).strip()[:5000]
         if not draft:
             raise ValueError("Empty draft")
         version = task["version"] + 1
@@ -283,6 +283,7 @@ class ProductWorker(Worker):
             text = decision.get("text", response)
             if not isinstance(text, str) or not text.strip():
                 raise ValueError("Invalid interpretation")
+            text = readable_mentions(text)
             if action == "question" and t["round"] < 2 and not t.get("user_answer"):
                 # Model-generated questions could contain private local facts. Send a
                 # deterministic question referring exclusively to the sender's message.
