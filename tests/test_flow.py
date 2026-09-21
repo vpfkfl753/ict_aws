@@ -234,9 +234,12 @@ class FakeSocketMode:
     """Socket Mode client that reports connectivity and replays connection errors."""
 
     def __init__(self, connected, failing):
+        from types import SimpleNamespace
+
         self.on_error_listeners = []
         self.connected = connected
         self.failing = failing
+        self.current_session = SimpleNamespace(session_id="test", last_ping_pong_time=None)
 
     def is_connected(self):
         return self.connected
@@ -245,6 +248,10 @@ class FakeSocketMode:
         if self.failing:
             for listener in self.on_error_listeners:
                 listener(BrokenPipeError(32, "Broken pipe"))
+        elif self.connected:
+            self.current_session.last_ping_pong_time = (
+                self.current_session.last_ping_pong_time or 0
+            ) + 1
 
 
 def drive(client, monkeypatch, ticks):
@@ -285,10 +292,75 @@ def test_watchdog_tolerates_a_brief_reconnect(monkeypatch):
         def wait(self, seconds):
             clock[0] += seconds
             client.connected = clock[0] >= 15
+            client.tick()
             return clock[0] >= 600
 
     watch_connection(client, Clock(), lambda: stalled.append(clock[0]), stall_seconds=120)
     assert stalled == []
+
+
+def test_watchdog_restarts_open_but_silent_socket_without_error_callbacks(monkeypatch):
+    client = FakeSocketMode(connected=True, failing=False)
+    client.tick = lambda: None
+    assert drive(client, monkeypatch, ticks=100) == [120.0]
+
+
+def test_watchdog_restarts_despite_brief_reconnections_every_ten_seconds(monkeypatch):
+    from types import SimpleNamespace
+
+    client = FakeSocketMode(connected=True, failing=False)
+    ticks = [0]
+
+    def reconnect():
+        ticks[0] += 1
+        if ticks[0] % 2 == 0:
+            client.current_session = SimpleNamespace(
+                session_id=str(ticks[0]), last_ping_pong_time=None
+            )
+            for listener in client.on_error_listeners:
+                listener(BrokenPipeError())
+
+    client.tick = reconnect
+    assert drive(client, monkeypatch, ticks=121) == [120.0]
+
+
+def test_watchdog_does_not_treat_old_pong_as_new_progress(monkeypatch):
+    client = FakeSocketMode(connected=True, failing=False)
+    client.current_session.last_ping_pong_time = 123.0
+    client.tick = lambda: None
+    assert drive(client, monkeypatch, ticks=100) == [120.0]
+
+
+def test_watchdog_restart_does_not_wait_for_logging_lock(monkeypatch):
+    import logging
+
+    logged, restarted = threading.Event(), threading.Event()
+
+    class Handler(logging.Handler):
+        def emit(self, record):
+            logged.set()
+
+    handler = Handler()
+    logger = logging.Logger("watchdog-lock-test")
+    logger.addHandler(handler)
+    monkeypatch.setattr("tacit.slack.log", logger)
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=watch_connection,
+        args=(FakeSocketMode(False, False), stop, restarted.set),
+        kwargs={"stall_seconds": 0, "interval": 0},
+        daemon=True,
+    )
+    handler.acquire()
+    try:
+        thread.start()
+        assert restarted.wait(1), "logging must not block recovery"
+        assert not logged.is_set()
+    finally:
+        stop.set()
+        handler.release()
+        thread.join(1)
+    assert logged.wait(1)
 
 
 def test_long_poll_delivers_new_work_without_waiting_for_deadline(setup):

@@ -189,37 +189,38 @@ def notify_once(relay, client):
 
 
 def exit_for_restart():
-    # StreamHandler.emit already flushed the reason, and logging.shutdown() would block
-    # here whenever a wedged thread still holds the handler lock. Fail hard instead, so
-    # systemd Restart=on-failure applies.
+    # Neither logging nor normal interpreter cleanup may delay process recovery.
+    # systemd Restart=on-failure applies even when a logging thread is wedged.
     os._exit(1)
 
 
 def watch_connection(client, stop, on_stall, stall_seconds=120, interval=5):
-    """End the process once Socket Mode stops carrying traffic.
+    """Restart after no confirmed Socket Mode heartbeat for stall_seconds.
 
-    A wedged client reconnects forever without ever receiving a message, so the
-    process stays alive and the unit stays active while every slash command fails
-    with dispatch_failed. Each failed attempt is briefly connected, so a healthy
-    interval has to be both connected and free of connection errors.
+    The built-in Slack SDK updates last_ping_pong_time when it receives a pong.
+    An open socket or a new session alone does not prove reception is working.
+    Observe progress using monotonic time, without comparing clocks to the SDK's
+    wall-clock timestamp. Quiet but healthy connections continue receiving pongs.
     """
-    errors = [0]
-
-    def record(error):
-        errors[0] += 1
-
-    client.on_error_listeners.append(record)
     healthy = time.monotonic()
-    seen = 0
+    session = client.current_session
+    seen = (getattr(session, "session_id", None), getattr(session, "last_ping_pong_time", None))
     while not stop.wait(interval):
-        total = errors[0]
-        broke, seen = total != seen, total
-        if client.is_connected() and not broke:
+        session = client.current_session
+        pong = getattr(session, "last_ping_pong_time", None)
+        marker = (getattr(session, "session_id", None), pong)
+        if client.is_connected() and pong is not None and marker != seen:
+            seen = marker
             healthy = time.monotonic()
             continue
         stalled = time.monotonic() - healthy
         if stalled >= stall_seconds:
-            log.error("Socket Mode has been unusable for %ds; exiting to restart", int(stalled))
+            # Best effort only: a blocked logging handler must not block on_stall.
+            threading.Thread(
+                target=log.error,
+                args=("Socket Mode heartbeat stalled for %ds; exiting to restart", int(stalled)),
+                daemon=True,
+            ).start()
             on_stall()
             return
 
