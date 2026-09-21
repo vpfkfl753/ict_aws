@@ -146,6 +146,9 @@ class ProductWorker(Worker):
                 self.notices_waiting = True
                 continue
             channel = thread["channel"]
+            if current["mode"] == "dm" and current["sender"] == self.owner and current.get("source"):
+                # The sender reviews context privately where they sent the DM.
+                channel = current["source"]["channel"]
             blocks = plain_blocks(item["text"])
             if item.get("version") and item.get("required_state"):
                 preview = item["text"]
