@@ -21,9 +21,13 @@ LABELS = {
 }
 
 
+def readable_mentions(text):
+    return re.sub(r"<@[UW][A-Z0-9]+(?:\|([^>\n]+))?>", lambda m: m.group(1) or "사용자", text)
+
+
 def compact(text, limit=280):
     lines = []
-    for line in text.splitlines():
+    for line in readable_mentions(text).splitlines():
         line = re.sub(r"^\s*(?:#{1,6}\s*|[-*■]\s+)", "", line).strip()
         line = line.replace("**", "").replace("`", "")
         if line:
@@ -32,7 +36,9 @@ def compact(text, limit=280):
     return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
-def plain_blocks(text):
+def plain_blocks(text, *, exact=False):
+    if not exact:
+        text = readable_mentions(text)
     return [
         {"type": "section", "text": {"type": "plain_text", "text": text[i : i + 2900]}}
         for i in range(0, len(text), 2900)
@@ -128,7 +134,7 @@ def draft_blocks(text, task_id, version, question=False):
             "text": {"type": "plain_text", "text": "확인 질문" if question else "공유할 내용"},
         }
     ]
-    for index, block in enumerate(plain_blocks(text)):
+    for index, block in enumerate(plain_blocks(text, exact=True)):
         block["block_id"] = f"tacit_{kind}_{task_id}_{version}_{index}"
         blocks.append(block)
     return blocks

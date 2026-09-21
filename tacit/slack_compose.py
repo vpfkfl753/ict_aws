@@ -3,6 +3,8 @@ import uuid
 
 import httpx
 
+from tacit.presentation import readable_mentions
+
 log = logging.getLogger(__name__)
 
 
@@ -14,7 +16,7 @@ def compose_view(text="", recipient=None, request_key=None, error=None, protocol
         "max_length": 3000,
     }
     if text:
-        message["initial_value"] = text
+        message["initial_value"] = readable_mentions(text)
     recipient_input = {"type": "users_select", "action_id": "user"}
     if recipient:
         recipient_input["initial_user"] = recipient
