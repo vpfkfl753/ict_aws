@@ -6,7 +6,7 @@ import httpx
 log = logging.getLogger(__name__)
 
 
-def compose_view(text="", recipient=None, request_key=None, error=None):
+def compose_view(text="", recipient=None, request_key=None, error=None, protocol=1):
     message = {
         "type": "plain_text_input",
         "action_id": "text",
@@ -37,6 +37,31 @@ def compose_view(text="", recipient=None, request_key=None, error=None):
             },
         ]
     )
+    if protocol == 2:
+        blocks[-2]["optional"] = True
+        blocks.append(
+            {
+                "type": "input",
+                "block_id": "mode",
+                "label": {"type": "plain_text", "text": "전송 방식"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "value",
+                    "initial_option": {
+                        "text": {"type": "plain_text", "text": "원문 DM + 맥락"},
+                        "value": "dm",
+                    },
+                    "options": [
+                        {"text": {"type": "plain_text", "text": label}, "value": mode}
+                        for label, mode in (
+                            ("원문 DM + 맥락", "dm"),
+                            ("Agent끼리 질문", "agent"),
+                            ("모든 Agent에게 질문", "broadcast"),
+                        )
+                    ],
+                },
+            }
+        )
     return {
         "type": "modal",
         "callback_id": "tacit_compose",
@@ -57,11 +82,14 @@ def status_view(text):
     }
 
 
-def register_compose(app, relay, team):
+def register_compose(app, relay, team, protocol=1):
     @app.view("tacit_compose")
     def submit(ack, body, view, client):
         values = view["state"]["values"]
         recipient = values["recipient"]["user"].get("selected_user")
+        mode = values.get("mode", {}).get("value", {}).get("selected_option", {}).get("value", "dm")
+        if protocol == 2 and mode == "broadcast":
+            recipient, mode = "broadcast", "agent"
         text = (values["message"]["text"].get("value") or "").strip()
         errors = {}
         if body.get("team", {}).get("id") != team:
@@ -79,12 +107,13 @@ def register_compose(app, relay, team):
         try:
             exchange = relay.request(
                 "POST",
-                "/v1/exchanges",
+                f"/v{protocol}/exchanges",
                 json={
                     "request_key": f"{team}:modal:{request_key}",
                     "sender": body["user"]["id"],
                     "recipient": recipient,
                     "text": text,
+                    **({"mode": mode} if protocol == 2 else {}),
                 },
             )
         except httpx.HTTPStatusError as exc:
@@ -93,7 +122,13 @@ def register_compose(app, relay, team):
                 if exc.response.status_code == 400
                 else "접수 결과를 확인하지 못했습니다. 잠시 후 다시 시도해주세요."
             )
-            updated = compose_view(text, recipient, request_key, error=reason)
+            updated = compose_view(
+                text,
+                recipient if recipient != "broadcast" else None,
+                request_key,
+                error=reason,
+                protocol=protocol,
+            )
             log.warning("Modal submission rejected status=%s", exc.response.status_code)
         except (httpx.HTTPError, ValueError):
             updated = compose_view(
@@ -101,6 +136,7 @@ def register_compose(app, relay, team):
                 recipient,
                 request_key,
                 error="접수 결과를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.",
+                protocol=protocol,
             )
             log.warning("Modal submission relay unavailable")
         else:

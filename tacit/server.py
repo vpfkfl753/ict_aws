@@ -179,9 +179,11 @@ def wait_ready(root, url, timeout=45):
                 active = systemctl("is-active", *SERVICES, check=False, capture=True)
                 if (
                     local.status_code == public.status_code == authorized.status_code == 200
-                    and local.json() == public.json() == {"status": "ok", "protocol": 1}
+                    and local.json() == public.json()
+                    and local.json().get("status") == "ok"
+                    and local.json().get("protocol") in {1, 2}
                     and protected.status_code == 401
-                    and len(authorized.json()) == 2
+                    and len(authorized.json()) >= 2
                     and active.stdout.splitlines() == ["active"] * len(SERVICES)
                 ):
                     print(f"Central ready: {url} (health + relay authentication verified)")
