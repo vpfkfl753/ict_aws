@@ -53,9 +53,9 @@ def settings_view(settings):
     options = [
         {"text": {"type": "plain_text", "text": label}, "value": key}
         for key, label in (
-            ("web", "공개 검색어 파일로 웹 검색"),
-            ("auto_receive", "수신 설명 자동 표시"),
-            ("auto_send", "참여 DM에서 맥락 자동 준비"),
+            ("web", "웹검색"),
+            ("auto_receive", "자동 tacit receive"),
+            ("auto_send", "자동 tacier send"),
         )
     ]
     selected = [o for o in options if settings[o["value"]]]
