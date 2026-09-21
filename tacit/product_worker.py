@@ -8,6 +8,8 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
+
 from tacit.presentation import draft_blocks, plain_blocks, readable_mentions
 from tacit.provider import create_provider, prepare_prompt
 from tacit.retrieval import Researcher, object_response
@@ -146,7 +148,11 @@ class ProductWorker(Worker):
                 self.notices_waiting = True
                 continue
             channel = thread["channel"]
-            if current["mode"] == "dm" and current["sender"] == self.owner and current.get("source"):
+            if (
+                current["mode"] == "dm"
+                and current["sender"] == self.owner
+                and current.get("source")
+            ):
                 # The sender reviews context privately where they sent the DM.
                 channel = current["source"]["channel"]
             blocks = plain_blocks(item["text"])
@@ -168,6 +174,8 @@ class ProductWorker(Worker):
             result = self.sender.client.chat_postEphemeral(
                 channel=channel,
                 user=self.owner,
+                as_user=False,
+                username="Tacit",
                 text="공유할 내용을 확인해주세요" if item.get("actions") else "작업 상세 기록",
                 blocks=blocks,
             )
@@ -189,6 +197,20 @@ class ProductWorker(Worker):
         version = task["version"] + 1
         self.save_private(f"{task['id']}-draft-{version}.json", draft)
         digest = hashlib.sha256(draft.encode()).hexdigest()
+        settings = self.relay.request("GET", "/v2/worker/settings")
+        if settings.get("auto_share", False):
+            try:
+                self.update(task, "auto_share", draft)
+            except httpx.HTTPStatusError as exc:
+                # A preference switched off during generation falls back to the
+                # usual approval screen. Never bypass another user's preference.
+                if exc.response.status_code != 409 or self.relay.request(
+                    "GET", "/v2/worker/settings"
+                ).get("auto_share", False):
+                    raise
+            else:
+                self.audit(task, "auto_shared", {"version": version, "digest": digest})
+                return
         text = draft
         actions = [
             action_button(label, action, task, version)

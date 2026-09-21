@@ -55,10 +55,11 @@ def settings_view(settings):
         for key, label in (
             ("web", "웹검색"),
             ("auto_receive", "자동 tacit receive"),
-            ("auto_send", "자동 tacier send"),
+            ("auto_send", "자동 tacit send"),
+            ("auto_share", "승인 없이 자동 공유"),
         )
     ]
-    selected = [o for o in options if settings[o["value"]]]
+    selected = [o for o in options if settings.get(o["value"], False)]
     element = {"type": "checkboxes", "action_id": "value", "options": options}
     if selected:
         element["initial_options"] = selected
@@ -67,7 +68,7 @@ def settings_view(settings):
             "type": "input",
             "block_id": "flags",
             "optional": True,
-            "label": {"type": "plain_text", "text": "자동화 (공유 승인은 항상 필요)"},
+            "label": {"type": "plain_text", "text": "자동화"},
             "element": element,
         }
     )
@@ -97,6 +98,31 @@ def notify_product_once(relay, client):
             thread = {"channel": channel, "ts": response["ts"]}
         else:
             client.chat_update(channel=channel, ts=thread["ts"], text=title, blocks=blocks)
+        if (
+            item["kind"] in {"approval_requested", "user_question"}
+            and item.get("actor") == item["owner"]
+            and item.get("event_version") == item["card"]["version"]
+            and item["card"]["owner"] == item["owner"]
+            and item["card"]["state"] in {"approval_wait", "user_wait"}
+        ):
+            alert = (
+                "공유할 내용을 확인해주세요."
+                if item["kind"] == "approval_requested"
+                else "Agent의 확인 질문에 답해주세요."
+            )
+            client.chat_postMessage(
+                channel=channel,
+                text=alert,
+                blocks=plain_blocks(alert + "\n" + compact(item["card"]["text"], 80)),
+                client_msg_id=str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"tacit-attention:{item['id']}:{item['owner']}:{item['card']['version']}:{item['kind']}",
+                    )
+                ),
+                unfurl_links=False,
+                unfurl_media=False,
+            )
         # Keep internal activity in the store. Never mirror logs into Slack replies.
         relay.request(
             "POST",
@@ -203,7 +229,9 @@ def register_product(app, relay, team):
             ack(response_action="errors", errors={"model": "openai/모델 이름 형식이 필요합니다."})
             return
         flags = {o["value"] for o in values["flags"]["value"].get("selected_options", [])}
-        settings.update({key: key in flags for key in ("web", "auto_receive", "auto_send")})
+        settings.update(
+            {key: key in flags for key in ("web", "auto_receive", "auto_send", "auto_share")}
+        )
         ack()
         relay.request("POST", "/v2/settings", params={"owner": body["user"]["id"]}, json=settings)
         home(client, body["user"]["id"])
