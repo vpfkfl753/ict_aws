@@ -19,6 +19,29 @@ def parse_send(text):
     return match.group(1), match.group(2)
 
 
+def send_mode(client, channel, bot_user):
+    if not channel or not bot_user:
+        raise ValueError("Conversation identity unavailable")
+    cursor = None
+    while True:
+        options = {"channel": channel}
+        if cursor:
+            options["cursor"] = cursor
+        response = client.conversations_members(**options)
+        members = response["members"]
+        if (
+            not isinstance(members, list)
+            or not members
+            or not all(isinstance(m, str) for m in members)
+        ):
+            raise ValueError("Conversation members unavailable")
+        if bot_user in members:
+            return "agent"
+        cursor = response.get("response_metadata", {}).get("next_cursor")
+        if not cursor:
+            return "dm"
+
+
 def render(exchange):
     if exchange is None:
         return "아직 수신한 맥락이 없습니다."
@@ -70,19 +93,17 @@ def register_handlers(app, relay, team, protocol=1, bot_user=None):
         try:
             extra = {}
             if protocol == 2:
-                mode = "agent" if recipient == "broadcast" else "dm"
-                if bot_user and command.get("channel_id"):
-                    try:
-                        if (
-                            bot_user
-                            in client.conversations_members(channel=command["channel_id"])[
-                                "members"
-                            ]
-                        ):
-                            mode = "agent"
-                    except Exception:
-                        pass
-                extra["mode"] = mode
+                try:
+                    extra["mode"] = (
+                        "agent"
+                        if recipient == "broadcast"
+                        else send_mode(client, command.get("channel_id"), bot_user)
+                    )
+                except Exception:
+                    respond(
+                        "대화 유형을 확인하지 못해 전송을 중단했습니다. /tacit-send 창에서 모드를 선택해주세요."
+                    )
+                    return
             exchange = relay.request(
                 "POST",
                 f"/v{protocol}/exchanges",

@@ -1,5 +1,15 @@
 # 우성원 에이전트 연결
 
+## v2 업데이트 안내
+
+신규 승인·Home 기능 전환은 [v2 배포 체크리스트](V2_ROLLOUT.md)를 먼저 따른다.
+중앙 서버 전환과 시간을 맞춰 기존 worker를 중지하고, main 업데이트·의존성 동기화·본인
+Slack 권한 재승인 후 재시작한다. 아래 초기 설치의 `chat:write`, `im:write`만으로는
+v2 전체 기능의 권한 검사를 통과하지 못한다. `--protocol 2` 검사로 확인한다.
+현재 고정 중계 주소는 `https://floral-establish-diffuser.ngrok-free.dev`이며 SSH 터널은 필요 없다.
+
+## 초기 연결 기록
+
 2026-09-21 갱신: 대회 Kiro 로그인 후 이 머신의 `TACIT_BACKEND=kiro`로 실제 Slack 송신
 맥락 생성을 확인했다. [검증 기록](KIRO_VALIDATION.md). 아래 9월 15일 상태는 당시 기록이다.
 
