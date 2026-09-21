@@ -43,7 +43,9 @@ class AgentRuntime:
     the native runtime's already-trusted tools can still execute.
     """
 
-    def __init__(self, backend, workspace, *, model=None, executable=None, timeout=180):
+    def __init__(
+        self, backend, workspace, *, model=None, executable=None, timeout=180, allow_read=True
+    ):
         if backend not in ("kiro", "opencode"):
             raise ValueError("backend must be kiro or opencode")
         self.backend = backend
@@ -55,6 +57,7 @@ class AgentRuntime:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self.model, self.timeout = model, timeout
+        self.allow_read = allow_read
         self.executable = executable or resolve_executable(backend)
         if not self.executable:
             raise RuntimeFailure(f"{backend} executable is not installed")
@@ -90,12 +93,21 @@ class AgentRuntime:
                     "enabled_providers": ["openai"],
                     "model": self.model,
                     "share": "disabled",
-                    "permission": {"*": "deny", "read": "allow", "glob": "allow", "grep": "allow"},
+                    "permission": {
+                        "*": "deny",
+                        **(
+                            {"read": "allow", "glob": "allow", "grep": "allow"}
+                            if self.allow_read
+                            else {}
+                        ),
+                    },
                 }
             )
             command = [self.executable, "acp", "--pure"]
         else:
-            command = [self.executable, "acp", "--trust-tools", "read"]
+            command = [self.executable, "acp"]
+            if self.allow_read:
+                command.extend(["--trust-tools", "read"])
         self.process = await asyncio.create_subprocess_exec(
             *command,
             cwd=self.workspace,

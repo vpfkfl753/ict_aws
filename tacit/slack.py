@@ -24,12 +24,20 @@ def render(exchange):
     prefix = f"맥락 전달 {exchange['id']}\n"
     if exchange["state"] == "completed":
         return prefix + f"원문: {exchange['text'][:800]}\n\n{exchange['result']}"
-    if exchange["state"].endswith("_failed"):
+    if exchange["state"].endswith("_failed") or exchange["state"] == "failed":
         return prefix + f"처리에 실패했습니다. {exchange['error']}"
+    if exchange["state"] == "cancelled":
+        return prefix + "추가 맥락 공유를 취소했습니다."
+    if exchange["state"] in {"approval_wait", "user_wait"}:
+        return prefix + (
+            "공유 승인을 기다리고 있습니다."
+            if exchange["state"] == "approval_wait"
+            else "사용자 답변을 기다리고 있습니다."
+        )
     return prefix + f"처리 중입니다: {exchange['state']}"
 
 
-def register_handlers(app, relay, team):
+def register_handlers(app, relay, team, protocol=1, bot_user=None):
     @app.command("/tacit-send")
     def send(ack, command, respond, client):
         ack()
@@ -38,7 +46,10 @@ def register_handlers(app, relay, team):
             respond("등록된 워크스페이스에서만 사용할 수 있습니다.")
             return
         try:
-            recipient, text = parse_send(command["text"])
+            if protocol == 2 and command["text"].strip().startswith("@broadcast "):
+                recipient, text = "broadcast", command["text"].strip()[11:]
+            else:
+                recipient, text = parse_send(command["text"])
         except ValueError:
             if len(command["text"]) > 3000:
                 respond(
@@ -47,7 +58,8 @@ def register_handlers(app, relay, team):
                 return
             try:
                 client.views_open(
-                    trigger_id=command["trigger_id"], view=compose_view(command["text"])
+                    trigger_id=command["trigger_id"],
+                    view=compose_view(command["text"], protocol=protocol),
                 )
                 log.info("Opened compose modal user=%s", command["user_id"])
             except Exception as exc:
@@ -55,14 +67,30 @@ def register_handlers(app, relay, team):
                 respond("전송 창을 열지 못했습니다. /tacit-send를 다시 실행해주세요.")
             return
         try:
+            extra = {}
+            if protocol == 2:
+                mode = "agent" if recipient == "broadcast" else "dm"
+                if bot_user and command.get("channel_id"):
+                    try:
+                        if (
+                            bot_user
+                            in client.conversations_members(channel=command["channel_id"])[
+                                "members"
+                            ]
+                        ):
+                            mode = "agent"
+                    except Exception:
+                        pass
+                extra["mode"] = mode
             exchange = relay.request(
                 "POST",
-                "/v1/exchanges",
+                f"/v{protocol}/exchanges",
                 json={
                     "request_key": f"{team}:{command['trigger_id']}",
                     "sender": command["user_id"],
                     "recipient": recipient,
                     "text": text,
+                    **extra,
                 },
             )
         except ValueError as exc:
@@ -71,7 +99,11 @@ def register_handlers(app, relay, team):
         except Exception:
             respond("접수하지 못했습니다. 두 사용자 등록과 중계 서버 상태를 확인해주세요.")
             return
-        respond(f"접수했습니다. 송신 Agent가 원문 DM과 맥락을 전달합니다.\n{exchange['id']}")
+        respond(
+            f"접수했습니다. 원문 또는 Agent 전용 요청을 처리하고, 추가 맥락은 승인 후 공유합니다.\n{exchange['id']}"
+            if protocol == 2
+            else f"접수했습니다. 송신 Agent가 원문 DM과 맥락을 전달합니다.\n{exchange['id']}"
+        )
 
     @app.command("/tacit-receive")
     def receive(ack, command, respond):
@@ -82,9 +114,11 @@ def register_handlers(app, relay, team):
             return
         try:
             params = {"owner": command["user_id"]}
+            if protocol == 2:
+                params["received_only"] = True
             if command["text"].strip():
                 params["exchange_id"] = command["text"].strip()
-            exchange = relay.request("GET", "/v1/exchanges/latest", params=params)
+            exchange = relay.request("GET", f"/v{protocol}/exchanges/latest", params=params)
             respond(response_type="ephemeral", text=render(exchange))
         except Exception:
             respond("조회하지 못했습니다. 중계 서버 상태를 확인해주세요.")
@@ -134,16 +168,25 @@ def notify_once(relay, client):
 
 def run_slack(relay, bot_token, app_token, team):
     app = App(token=bot_token)
-    if app.client.auth_test()["team_id"] != team:
+    auth = app.client.auth_test()
+    if auth["team_id"] != team:
         raise ValueError("SLACK_BOT_TOKEN does not belong to TACIT_TEAM_ID")
-    register_handlers(app, relay, team)
-    register_compose(app, relay, team)
+    protocol = relay.request("GET", "/health")["protocol"]
+    register_handlers(app, relay, team, protocol, auth["user_id"])
+    register_compose(app, relay, team, protocol)
+    if protocol == 2:
+        from tacit.slack_product import notify_product_once, register_product
+
+        relay.request("POST", "/v2/bridge/info", json={"bot_user": auth["user_id"]})
+        register_product(app, relay, team)
     stop = threading.Event()
 
     def notifications():
         while not stop.is_set():
             try:
                 notify_once(relay, app.client)
+                if protocol == 2:
+                    notify_product_once(relay, app.client)
             except Exception as exc:
                 log.error("Notification delivery failed (%s); will retry", type(exc).__name__)
             stop.wait(5)
