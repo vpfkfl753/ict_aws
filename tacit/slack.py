@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import threading
 import time
@@ -16,6 +17,29 @@ def parse_send(text):
     if not match:
         raise ValueError("사용법: /tacit-send @상대 메시지")
     return match.group(1), match.group(2)
+
+
+def send_mode(client, channel, bot_user):
+    if not channel or not bot_user:
+        raise ValueError("Conversation identity unavailable")
+    cursor = None
+    while True:
+        options = {"channel": channel}
+        if cursor:
+            options["cursor"] = cursor
+        response = client.conversations_members(**options)
+        members = response["members"]
+        if (
+            not isinstance(members, list)
+            or not members
+            or not all(isinstance(m, str) for m in members)
+        ):
+            raise ValueError("Conversation members unavailable")
+        if bot_user in members:
+            return "agent"
+        cursor = response.get("response_metadata", {}).get("next_cursor")
+        if not cursor:
+            return "dm"
 
 
 def render(exchange):
@@ -69,19 +93,17 @@ def register_handlers(app, relay, team, protocol=1, bot_user=None):
         try:
             extra = {}
             if protocol == 2:
-                mode = "agent" if recipient == "broadcast" else "dm"
-                if bot_user and command.get("channel_id"):
-                    try:
-                        if (
-                            bot_user
-                            in client.conversations_members(channel=command["channel_id"])[
-                                "members"
-                            ]
-                        ):
-                            mode = "agent"
-                    except Exception:
-                        pass
-                extra["mode"] = mode
+                try:
+                    extra["mode"] = (
+                        "agent"
+                        if recipient == "broadcast"
+                        else send_mode(client, command.get("channel_id"), bot_user)
+                    )
+                except Exception:
+                    respond(
+                        "대화 유형을 확인하지 못해 전송을 중단했습니다. /tacit-send 창에서 모드를 선택해주세요."
+                    )
+                    return
             exchange = relay.request(
                 "POST",
                 f"/v{protocol}/exchanges",
@@ -166,6 +188,43 @@ def notify_once(relay, client):
         relay.request("POST", f"/v1/notifications/{exchange['id']}/ack")
 
 
+def exit_for_restart():
+    # Neither logging nor normal interpreter cleanup may delay process recovery.
+    # systemd Restart=on-failure applies even when a logging thread is wedged.
+    os._exit(1)
+
+
+def watch_connection(client, stop, on_stall, stall_seconds=120, interval=5):
+    """Restart after no confirmed Socket Mode heartbeat for stall_seconds.
+
+    The built-in Slack SDK updates last_ping_pong_time when it receives a pong.
+    An open socket or a new session alone does not prove reception is working.
+    Observe progress using monotonic time, without comparing clocks to the SDK's
+    wall-clock timestamp. Quiet but healthy connections continue receiving pongs.
+    """
+    healthy = time.monotonic()
+    session = client.current_session
+    seen = (getattr(session, "session_id", None), getattr(session, "last_ping_pong_time", None))
+    while not stop.wait(interval):
+        session = client.current_session
+        pong = getattr(session, "last_ping_pong_time", None)
+        marker = (getattr(session, "session_id", None), pong)
+        if client.is_connected() and pong is not None and marker != seen:
+            seen = marker
+            healthy = time.monotonic()
+            continue
+        stalled = time.monotonic() - healthy
+        if stalled >= stall_seconds:
+            # Best effort only: a blocked logging handler must not block on_stall.
+            threading.Thread(
+                target=log.error,
+                args=("Socket Mode heartbeat stalled for %ds; exiting to restart", int(stalled)),
+                daemon=True,
+            ).start()
+            on_stall()
+            return
+
+
 def run_slack(relay, bot_token, app_token, team):
     app = App(token=bot_token)
     auth = app.client.auth_test()
@@ -194,6 +253,12 @@ def run_slack(relay, bot_token, app_token, team):
     thread = threading.Thread(target=notifications, daemon=True)
     thread.start()
     handler = SocketModeHandler(app, app_token)
+    watchdog = threading.Thread(
+        target=watch_connection,
+        args=(handler.client, stop, exit_for_restart),
+        daemon=True,
+    )
+    watchdog.start()
     try:
         handler.start()
     finally:
