@@ -32,6 +32,25 @@ tacit-server logs --follow
 
 서비스는 비정상 종료 시 10초 후 재시작한다. worker는 중앙 묶음에 없으며 위 명령으로 시작·종료하지 않는다. 중앙 서버를 끌 때 진행 중인 작업은 중단될 수 있고, 재개 시 임대 만료·재시도 규칙이 적용된다.
 
+## Slack 명령이 "앱이 반응하지 않아"로 실패할 때
+
+슬래시 명령은 Socket Mode WebSocket으로 전달된다. 연결이 없으면 Slack은 3초 안에 응답을 받지 못하고 `dispatch_failed`로 처리한다. 커넥터 프로세스는 살아 있으므로 `tacit-server status`에는 `active (running)`으로 보인다. 상태가 초록색이라는 것만으로 Slack 연결을 확인했다고 볼 수 없다.
+
+2026-09-20 21:56:49부터 2026-09-21 10:29:01까지 12시간 32분 동안 이 상태였다. NetworkManager가 기본 경로를 `eno1`과 `wlp7s0` 사이에서 전환하면서 WebSocket이 끊겼고, 이후 `slack_bolt`의 재연결이 복구에 실패해 10.9초 주기로 `BrokenPipeError`만 4,132회 반복했다. TLS 핸드셰이크와 HTTP 101은 매번 성공하지만 첫 수신 시점에 소켓이 이미 죽어 있어 `hello`조차 받지 못했다. 프로세스가 종료되지 않으므로 `Restart=on-failure`도 동작하지 않았다.
+
+`tacit/slack.py`의 감시 스레드가 이 상태를 감지한다. 연결되어 있고 연결 오류가 없는 구간만 정상으로 보며, 120초 동안 정상 구간이 없으면 로그를 남기고 종료 코드 1로 프로세스를 끝낸다. systemd가 10초 뒤 재시작하므로 무증상 장애가 약 2분의 중단으로 바뀐다. 반복되면 `status`의 `NRestarts`가 증가한다.
+
+실제 연결 여부는 다음으로 확인한다.
+
+```bash
+tacit-server logs | grep -c BrokenPipeError
+ss -tnp | grep "$(systemctl --user show tacit-slack.service --property=MainPID --value)"
+```
+
+정상이면 커넥터 PID가 Slack 쪽 `:443` 연결 하나와 중계 `127.0.0.1:8765` 연결 하나를 유지한다. 즉시 복구가 필요하면 `systemctl --user restart tacit-slack.service`를 실행한다.
+
+이 머신은 `eno1`과 `wlp7s0`이 모두 기본 경로를 가진 dual-homed 구성이라 경로 전환이 반복될 수 있다. 중앙 서버를 고정 회선으로만 운용하려면 사용하지 않는 인터페이스의 자동 연결을 끄는 편이 낫다.
+
 ## 최초 설치 또는 중앙 머신 이전
 
 Linux와 사용자 systemd를 전제로 한다. 저장소와 `.venv`, 기존 `.tacit/setup/relay.env`, `slack.env`가 필요하다. `uv sync --locked` 후 실행한다.

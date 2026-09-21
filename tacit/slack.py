@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import threading
 import time
@@ -166,6 +167,42 @@ def notify_once(relay, client):
         relay.request("POST", f"/v1/notifications/{exchange['id']}/ack")
 
 
+def exit_for_restart():
+    # StreamHandler.emit already flushed the reason, and logging.shutdown() would block
+    # here whenever a wedged thread still holds the handler lock. Fail hard instead, so
+    # systemd Restart=on-failure applies.
+    os._exit(1)
+
+
+def watch_connection(client, stop, on_stall, stall_seconds=120, interval=5):
+    """End the process once Socket Mode stops carrying traffic.
+
+    A wedged client reconnects forever without ever receiving a message, so the
+    process stays alive and the unit stays active while every slash command fails
+    with dispatch_failed. Each failed attempt is briefly connected, so a healthy
+    interval has to be both connected and free of connection errors.
+    """
+    errors = [0]
+
+    def record(error):
+        errors[0] += 1
+
+    client.on_error_listeners.append(record)
+    healthy = time.monotonic()
+    seen = 0
+    while not stop.wait(interval):
+        total = errors[0]
+        broke, seen = total != seen, total
+        if client.is_connected() and not broke:
+            healthy = time.monotonic()
+            continue
+        stalled = time.monotonic() - healthy
+        if stalled >= stall_seconds:
+            log.error("Socket Mode has been unusable for %ds; exiting to restart", int(stalled))
+            on_stall()
+            return
+
+
 def run_slack(relay, bot_token, app_token, team):
     app = App(token=bot_token)
     auth = app.client.auth_test()
@@ -194,6 +231,12 @@ def run_slack(relay, bot_token, app_token, team):
     thread = threading.Thread(target=notifications, daemon=True)
     thread.start()
     handler = SocketModeHandler(app, app_token)
+    watchdog = threading.Thread(
+        target=watch_connection,
+        args=(handler.client, stop, exit_for_restart),
+        daemon=True,
+    )
+    watchdog.start()
     try:
         handler.start()
     finally:
