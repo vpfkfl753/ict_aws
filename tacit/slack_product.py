@@ -1,10 +1,12 @@
 """Slack Home, settings, scoped audit, approval and clarification controls."""
 
+import hashlib
 import json
 import re
+import time
 import uuid
 
-from tacit.product_worker import plain_blocks
+from tacit.presentation import card_blocks, compact, draft_text, plain_blocks
 
 
 def modal(title, callback, metadata, blocks, submit="저장"):
@@ -73,20 +75,6 @@ def settings_view(settings):
 
 
 def notify_product_once(relay, client):
-    labels = {
-        "created": "작업 접수",
-        "original_sent": "원문 전송",
-        "approval_requested": "공유 승인 대기",
-        "approve": "공유 승인",
-        "edit": "수정본 공유 승인",
-        "cancel": "공유 취소",
-        "context": "승인한 맥락",
-        "question": "Agent 질문",
-        "answer": "Agent 답변",
-        "result": "나를 위한 설명",
-        "agent_result": "질문에 대한 승인된 Agent 답변",
-        "failed": "작업 실패: 로컬 워커를 확인해주세요",
-    }
     for item in relay.request("GET", "/v2/deliveries"):
         thread = item["thread"]
         channel = (
@@ -94,19 +82,22 @@ def notify_product_once(relay, client):
             if thread
             else client.conversations_open(users=item["owner"])["channel"]["id"]
         )
-        text = labels.get(item["kind"], item["kind"]) + " · " + item["id"] + "\n" + item["text"]
-        kwargs = {"thread_ts": thread["ts"]} if thread else {}
-        response = client.chat_postMessage(
-            channel=channel,
-            text="Tacit 작업 " + item["id"],
-            blocks=plain_blocks(text),
-            client_msg_id=str(
-                uuid.uuid5(uuid.NAMESPACE_URL, f"tacit:{item['id']}:{item['owner']}:{item['seq']}")
-            ),
-            unfurl_links=False,
-            unfurl_media=False,
-            **kwargs,
-        )
+        title, blocks = card_blocks(item["card"])
+        if not thread:
+            response = client.chat_postMessage(
+                channel=channel,
+                text=title,
+                blocks=blocks,
+                client_msg_id=str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, f"tacit-card:{item['id']}:{item['owner']}")
+                ),
+                unfurl_links=False,
+                unfurl_media=False,
+            )
+            thread = {"channel": channel, "ts": response["ts"]}
+        else:
+            client.chat_update(channel=channel, ts=thread["ts"], text=title, blocks=blocks)
+        # Keep internal activity in the store. Never mirror logs into Slack replies.
         relay.request(
             "POST",
             f"/v2/deliveries/{item['id']}",
@@ -114,7 +105,7 @@ def notify_product_once(relay, client):
                 "owner": item["owner"],
                 "seq": item["seq"],
                 "channel": channel,
-                "ts": response["ts"],
+                "ts": thread["ts"],
             },
         )
 
@@ -127,7 +118,9 @@ def register_product(app, relay, team):
         settings = relay.request("GET", "/v2/settings", params={"owner": owner})
         recent = relay.request("GET", "/v2/exchanges", params={"owner": owner})
         agents = relay.request("GET", "/v1/agents")
-        text = f"Tacit · 내 설정과 작업\n실행기: {settings['backend']} / {settings['model'] or '기본 모델'}\n자료 폴더: {settings['workspace'] or '로컬 워커 기본 폴더'}\n웹 검색: {settings['web']} · 자동 수신: {settings['auto_receive']} · 자동 준비: {settings['auto_send']}\n최근 연결: {agents.get(owner) or '대기'}\n자료 원문과 승인 전 초안은 로컬에 보관합니다."
+        seen = agents.get(owner)
+        connection = "연결됨" if seen and time.time() - seen < 600 else "연결 대기"
+        text = f"내 Agent · {connection}\n{settings['backend'] or '로컬 기본 실행기'} · {settings['model'] or '기본 모델'}\n자료 폴더: {settings['workspace'] or '로컬에서 지정한 폴더'}"
         blocks = plain_blocks(text)
         blocks.append(
             {
@@ -152,12 +145,20 @@ def register_product(app, relay, team):
                     "type": "section",
                     "text": {
                         "type": "plain_text",
-                        "text": f"{task['id']}\n{task['sender']} → {task['recipient']} · {task['state']}",
+                        "text": compact(task.get("text") or "대화 기록", 100)
+                        + "\n"
+                        + {
+                            "completed": "완료",
+                            "cancelled": "공유 안 함",
+                            "failed": "연결 확인 필요",
+                            "approval_wait": "공유 확인 대기",
+                            "user_wait": "답변 대기",
+                        }.get(task["state"], "처리 중"),
                     },
                     "accessory": {
                         "type": "button",
-                        "action_id": "tacit_history",
-                        "text": {"type": "plain_text", "text": "기록"},
+                        "action_id": "tacit_result",
+                        "text": {"type": "plain_text", "text": "답변"},
                         "value": task["id"],
                     },
                 }
@@ -207,7 +208,7 @@ def register_product(app, relay, team):
         relay.request("POST", "/v2/settings", params={"owner": body["user"]["id"]}, json=settings)
         home(client, body["user"]["id"])
 
-    @app.action("tacit_history")
+    @app.action(re.compile(r"^tacit_(history|result)$"))
     def history(ack, body, client):
         ack()
         if not valid(body):
@@ -220,46 +221,44 @@ def register_product(app, relay, team):
         text = (
             "조회 가능한 기록이 없습니다."
             if not task
-            else f"{task['id']} · {task['state']}\n"
-            + "\n\n".join(
-                f"{e['seq']}. {e['kind']} · {e['actor']}\n{e['text']}" for e in task["events"]
-            )
+            else task.get("result") or "아직 답변을 준비하고 있어요."
         )
         view = {
             "type": "modal",
-            "title": {"type": "plain_text", "text": "작업 기록"},
+            "title": {"type": "plain_text", "text": "답변"},
             "close": {"type": "plain_text", "text": "닫기"},
             "blocks": plain_blocks(text[:60000]),
         }
-        if task:
-            view["blocks"].append(
-                {
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "action_id": "tacit_local_audit",
-                            "text": {"type": "plain_text", "text": "내 로컬 접근·도구 기록 받기"},
-                            "value": task["id"],
-                        }
-                    ],
-                }
-            )
         client.views_open(trigger_id=body["trigger_id"], view=view)
 
     @app.action("tacit_local_audit")
     def local_audit(ack, body, client):
         ack()
-        if valid(body):
-            relay.request(
-                "POST",
-                "/v2/audit/" + body["actions"][0]["value"],
-                params={"owner": body["user"]["id"]},
-            )
-            client.chat_postMessage(
-                channel=body["user"]["id"],
-                text="내 워커에 로컬 감사 기록을 요청했습니다. 워커가 연결되면 이 대화에 표시합니다.",
-            )
+        # Old audit buttons no longer publish logs to Slack.
+
+    @app.action("tacit_review")
+    def review(ack, body, client, respond):
+        ack()
+        if not valid(body):
+            return
+        meta = json.loads(body["actions"][0]["value"])
+        owner = body["user"]["id"]
+        task = relay.request(
+            "GET", "/v2/exchanges/latest", params={"owner": owner, "exchange_id": meta["id"]}
+        )
+        if (
+            not task
+            or task["owner"] != owner
+            or task["version"] != meta["version"]
+            or task["state"] not in {"approval_wait", "user_wait"}
+        ):
+            respond("이미 처리된 요청이에요. 최신 카드를 확인해주세요.")
+            return
+        relay.request(
+            "POST",
+            "/v2/previews/" + meta["id"],
+            params={"owner": owner, "version": meta["version"]},
+        )
 
     @app.action(re.compile(r"^tacit_(approve|cancel|edit|user_answer)$"))
     def decision(ack, body, client, respond):
@@ -298,7 +297,14 @@ def register_product(app, relay, team):
             for b in body.get("message", {}).get("blocks", [])
             if b.get("type") == "section"
         )
-        draft = preview.split("\n\n", 1)[-1] if kind == "edit" else ""
+        draft = (
+            (
+                draft_text(body.get("message", {}).get("blocks", []), meta["id"], meta["version"])
+                or preview.split("\n\n", 1)[-1]
+            )
+            if kind == "edit"
+            else ""
+        )
         meta["action"] = "edit" if kind == "edit" else "user_answer"
         blocks = [
             text_input(
@@ -339,14 +345,23 @@ def register_product(app, relay, team):
             return
         ack()
         try:
+            action = meta["action"]
+            if action == "edit":
+                task = relay.request(
+                    "GET",
+                    "/v2/exchanges/latest",
+                    params={"owner": body["user"]["id"], "exchange_id": meta["id"]},
+                )
+                if task and hashlib.sha256(text.encode()).hexdigest() == task.get("digest"):
+                    action = "approve"
             relay.request(
                 "POST",
                 f"/v2/decisions/{meta['id']}",
                 json={
                     "owner": body["user"]["id"],
                     "version": meta["version"],
-                    "action": meta["action"],
-                    "value": text,
+                    "action": action,
+                    "value": text if action != "approve" else None,
                 },
             )
         except Exception:

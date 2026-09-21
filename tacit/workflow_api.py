@@ -124,6 +124,10 @@ def register_workflow(app, store, members, bridge, agent):
     def local_requests(owner=Depends(agent)):
         return flow.local_requests(owner)
 
+    @router.post("/previews/{task_id}", dependencies=[Depends(bridge)])
+    def preview(task_id: str, owner: str, version: int):
+        return call(flow.request_preview, registered(owner), task_id, version)
+
     @router.post("/worker/requests/{request_id}")
     def finish_request(request_id: str, owner=Depends(agent)):
         flow.local_requests(owner, request_id)

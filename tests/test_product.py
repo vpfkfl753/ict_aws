@@ -265,6 +265,7 @@ class Slack:
         self.client = self
         self.messages = []
         self.originals = []
+        self.updates = []
 
     def send(self, task):
         self.originals.append(task["text"])
@@ -276,6 +277,14 @@ class Slack:
     def chat_postMessage(self, **kwargs):
         self.messages.append(kwargs)
         return {"channel": kwargs["channel"], "ts": str(len(self.messages))}
+
+    def chat_update(self, **kwargs):
+        self.updates.append(kwargs)
+        return {"channel": kwargs["channel"], "ts": kwargs["ts"]}
+
+    def chat_postEphemeral(self, **kwargs):
+        self.messages.append({**kwargs, "ephemeral": True})
+        return {"message_ts": str(len(self.messages))}
 
 
 class Model:
@@ -316,6 +325,7 @@ def test_product_workers_use_local_previews_and_real_transition_contract(
         for u in ("UA", "UB")
     }
     task = create(flow)
+    notify_product_once(bridge, slack)
     assert workers["UA"].once()
     assert slack.originals == [task["text"]]
     with store.db() as db:
@@ -334,7 +344,10 @@ def test_product_workers_use_local_previews_and_real_transition_contract(
         assert path.stat().st_mode & 0o777 == 0o600
     for _ in range(10):
         notify_product_once(bridge, slack)
-    assert any("내 조건" in json.dumps(message, ensure_ascii=False) for message in slack.messages)
+    assert any(
+        "내 조건" in json.dumps(message, ensure_ascii=False)
+        for message in slack.messages + slack.updates
+    )
     assert flow.deliveries() == []
 
 
@@ -354,6 +367,7 @@ def test_notice_survives_restart_after_approval_transition(system, tmp_path, mon
     )
     create(flow, mode="agent")
     task = flow.claim("UA")
+    flow.delivered(task["id"], "UA", 1, "DUBOT", "1")
     worker.approval(task, "private draft")
     assert slack.messages == []
     restarted = ProductWorker(
@@ -463,9 +477,10 @@ def test_combined_long_poll_wakes_for_work_or_own_audit(system, kind):
         assert batch["requests"][0]["owner"] == "UA"
 
 
-def test_combined_poll_audit_delivery_and_ack_do_not_lease_work(system, tmp_path):
+def test_legacy_audit_request_does_not_send_slack_logs_or_lease_work(system, tmp_path):
     _, flow, _, agents = system
     task = create(flow)
+    flow.delivered(task["id"], "UA", 1, "DUBOT", "1")
     flow.request_audit("UA", task["id"])
     slack = Slack()
     worker = ProductWorker(
@@ -479,7 +494,7 @@ def test_combined_poll_audit_delivery_and_ack_do_not_lease_work(system, tmp_path
         wait_seconds=0,
     )
     assert worker.once()
-    assert len(slack.messages) == 1
+    assert slack.messages == []
     assert flow.local_requests("UA") == []
     assert flow.get("UA", task["id"])["state"] == "prepare_pending"
 
@@ -743,3 +758,194 @@ def test_web_pins_checked_public_ip_and_keeps_tls_hostname(monkeypatch):
 
     monkeypatch.setattr("tacit.retrieval.httpx.Client", HTTP)
     assert "Public text" in public_get("https://example.com/page").parts
+
+
+def test_card_updates_one_parent_without_any_thread_logs(system):
+    from tacit.presentation import card_blocks
+
+    _, flow, bridge, _ = system
+
+    class Cards(Slack):
+        def __init__(self):
+            super().__init__()
+            self.updates = []
+
+        def chat_update(self, **kwargs):
+            self.updates.append(kwargs)
+
+    slack = Cards()
+    task = create(flow)
+    notify_product_once(bridge, slack)
+    draft(flow, task)
+    approve(flow, task)
+    work = flow.claim("UB")
+    full = "핵심 답변입니다. " + "자세한 근거가 있습니다. " * 100
+    flow.change(task["id"], "UB", "result", full, lease=work["lease"])
+    for _ in range(10):
+        notify_product_once(bridge, slack)
+    roots = [m for m in slack.messages if not m.get("thread_ts")]
+    assert len(roots) == 2  # Exactly one main card per participant.
+    assert slack.updates
+    assert all(not m.get("reply_broadcast") for m in slack.messages)
+    assert all(not m.get("thread_ts") for m in slack.messages)
+    assert len(slack.messages) == 2
+    assert flow.get("UB")["result"] == full
+    for update in slack.updates:
+        visible = "\n".join(b.get("text", {}).get("text", "") for b in update["blocks"])
+        assert len(visible) < 500
+        assert task["id"] not in visible
+        assert "completed" not in visible
+    assert card_blocks({**flow.get("UB"), "viewer": "UB"})[0] == "답변이 왔어요"
+
+
+def test_missing_parent_queues_preview_without_creating_another_main_message(system, tmp_path):
+    _, flow, _, agents = system
+    slack = Slack()
+    worker = ProductWorker(
+        agents["UA"],
+        Model(tmp_path),
+        slack,
+        tmp_path / "local",
+        owner="UA",
+        allowed_roots=[tmp_path],
+        bot_user="UBOT",
+        wait_seconds=0,
+    )
+    create(flow, mode="agent")
+    work = flow.claim("UA")
+    worker.approval(work, "오후 2시라는 뜻이에요.")
+    worker.flush_notices()
+    assert worker.notices_waiting
+    assert slack.messages == []
+    flow.delivered(work["id"], "UA", 1, "DOWNER", "parent.1")
+    worker.flush_notices()
+    assert not worker.notices_waiting
+    assert len(slack.messages) == 1
+    assert "thread_ts" not in slack.messages[0]
+    assert slack.messages[0]["channel"] == "DOWNER"
+    assert slack.messages[0]["ephemeral"] is True
+    assert slack.messages[0]["user"] == "UA"
+
+
+def test_card_payload_excludes_private_draft_and_other_users_result(system):
+    from tacit.presentation import card_snapshot
+
+    _, flow, _, _ = system
+    task = create(flow)
+    task.update(
+        state="completed",
+        result="PRIVATE RECIPIENT RESULT",
+        approved_edit="PRIVATE DRAFT",
+        user_answer="PRIVATE ANSWER",
+    )
+    assert "PRIVATE" not in json.dumps(card_snapshot(task, "UA"))
+    assert "PRIVATE" not in json.dumps(card_snapshot(task, "UB", auto_receive=False))
+    assert card_snapshot(task, "UB")["result"] == "PRIVATE RECIPIENT RESULT"
+
+
+class CardApp:
+    def __init__(self):
+        self.handlers = {}
+
+    def action(self, key):
+        def register(fn):
+            self.handlers[fn.__name__] = fn
+            return fn
+
+        return register
+
+    event = view = action
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_root_review_requests_local_preview_without_uploading_or_approving(system, stale):
+    from tacit.slack_product import register_product
+
+    store, flow, bridge, _ = system
+    private = "공유 예정인 문장. " * 320 + "마지막의 중요한 조건도 보여야 합니다."
+    task = draft(flow, create(flow), private)
+    flow.delivered(task["id"], "UA", 1, "DOWNER", "root.1")
+    views, responses = [], []
+
+    class UI:
+        def views_open(self, **kwargs):
+            views.append(kwargs["view"])
+
+    app = CardApp()
+    register_product(app, bridge, "TEAM")
+    body = {
+        "team": {"id": "TEAM"},
+        "user": {"id": "UA"},
+        "trigger_id": "trigger",
+        "actions": [{"value": json.dumps({"id": task["id"], "version": 0 if stale else 1})}],
+    }
+    app.handlers["review"](lambda: None, body, UI(), lambda msg: responses.append(msg))
+    assert views == []
+    if stale:
+        assert responses
+        assert flow.local_requests("UA") == []
+    else:
+        requests = flow.local_requests("UA")
+        assert len(requests) == 1 and requests[0]["kind"] == "preview"
+        assert flow.local_requests("UB") == []
+    assert flow.get("UA")["state"] == "approval_wait"
+    with store.db() as db:
+        assert private not in db.execute("SELECT body FROM workflows").fetchone()[0]
+
+
+def test_root_review_rejects_other_user_before_reading_private_slack_thread(system):
+    from tacit.slack_product import register_product
+
+    _, flow, bridge, _ = system
+    task = draft(flow, create(flow))
+    app, responses = CardApp(), []
+    register_product(app, bridge, "TEAM")
+    body = {
+        "team": {"id": "TEAM"},
+        "user": {"id": "UB"},
+        "actions": [{"value": json.dumps({"id": task["id"], "version": 1})}],
+    }
+    app.handlers["review"](lambda: None, body, None, lambda msg: responses.append(msg))
+    assert responses
+
+
+def test_private_clarification_updates_only_own_main_card(system):
+    _, flow, _, _ = system
+    task = draft(flow, create(flow))
+    approve(flow, task)
+    work = flow.claim("UB")
+    flow.change(task["id"], "UB", "ask_user", "PRIVATE QUESTION", lease=work["lease"])
+    seen = []
+    for _ in range(10):
+        for item in flow.deliveries():
+            seen.append(item)
+            assert "PRIVATE QUESTION" not in json.dumps(item)
+            flow.delivered(item["id"], item["owner"], item["seq"], "D" + item["owner"], "1")
+    questions = [item for item in seen if item["kind"] == "user_question"]
+    assert [item["owner"] for item in questions] == ["UB"]
+    assert questions[0]["card"]["state"] == "user_wait"
+
+
+@pytest.mark.parametrize("edited", [False, True])
+def test_review_submission_preserves_exact_user_text_and_approval_kind(system, edited):
+    from tacit.slack_product import register_product
+
+    _, flow, bridge, _ = system
+    original = "오후 2시라는 뜻이에요."
+    task = draft(flow, create(flow), original)
+    value = "오후 3시로 수정해서 공유해요." if edited else original
+    app = CardApp()
+    register_product(app, bridge, "TEAM")
+    view = {
+        "private_metadata": json.dumps({"id": task["id"], "version": 1, "action": "edit"}),
+        "state": {"values": {"answer": {"value": {"value": value}}}},
+    }
+    app.handlers["decision_save"](
+        lambda **kwargs: None, {"team": {"id": "TEAM"}, "user": {"id": "UA"}}, view, None
+    )
+    current = flow.get("UA")
+    assert current["state"] == "publish_pending"
+    assert current["events"][-1]["kind"] == ("edit" if edited else "approve")
+    work = flow.claim("UA")
+    flow.change(task["id"], "UA", "publish", value, lease=work["lease"])
+    assert flow.get("UB")["context"] == value
