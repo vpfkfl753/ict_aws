@@ -30,9 +30,9 @@ def create_app(store=None, members=None, bridge_token=None):
     members = members if members is not None else json.loads(os.environ["TACIT_MEMBERS"])
     bridge_token = bridge_token or os.environ["TACIT_BRIDGE_TOKEN"]
     tokens = [*members.values(), bridge_token]
-    if len(members) != 2 or len(set(tokens)) != 3 or any(len(t) < 24 for t in tokens):
+    if len(members) < 2 or len(set(tokens)) != len(tokens) or any(len(t) < 24 for t in tokens):
         raise ValueError(
-            "Configure two members and three distinct tokens of at least 24 characters"
+            "Configure at least two members and distinct tokens of at least 24 characters"
         )
     app = FastAPI(title="Tacit Agent Plane", version="0.1.0")
 
@@ -58,7 +58,7 @@ def create_app(store=None, members=None, bridge_token=None):
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "protocol": 1}
+        return {"status": "ok", "protocol": 2}
 
     @app.get("/v1/agents", dependencies=[Depends(bridge)])
     def agents():
@@ -117,4 +117,7 @@ def create_app(store=None, members=None, bridge_token=None):
         store.acknowledge(exchange_id)
         return {"ok": True}
 
+    from tacit.workflow_api import register_workflow
+
+    register_workflow(app, store, members, bridge, agent)
     return app
