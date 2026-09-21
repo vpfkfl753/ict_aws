@@ -94,7 +94,28 @@ def main():
             )
             owner = required("TACIT_OWNER")
             sender = SlackSender(required("SLACK_USER_TOKEN"), owner, required("TACIT_TEAM_ID"))
-            worker = Worker(
+            worker_type = Worker
+            options = {}
+            health = relay.request("GET", "/health")
+            if health.get("protocol") == 2:
+                from tacit.product_worker import ProductWorker
+
+                bot_user = relay.request("GET", "/v2/worker/info")["bot_user"]
+                if not bot_user:
+                    raise ValueError("Start the updated Slack connector before the worker")
+                worker_type = ProductWorker
+                options = {
+                    "owner": owner,
+                    "bot_user": bot_user,
+                    "allowed_roots": os.environ.get(
+                        "TACIT_ALLOWED_ROOTS", required("TACIT_WORKSPACE")
+                    ).split(os.pathsep),
+                }
+            else:
+                logging.getLogger(__name__).warning(
+                    "Relay protocol 1: legacy workflow, no approval UI; upgrade relay and Slack for protocol 2"
+                )
+            worker = worker_type(
                 relay,
                 provider,
                 sender,
@@ -107,6 +128,7 @@ def main():
                         else "180",
                     )
                 ),
+                **options,
             )
             worker.run()
         else:

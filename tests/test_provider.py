@@ -63,3 +63,31 @@ def test_factory_preserves_codex_default_and_rejects_bad_configuration(tmp_path)
         create_provider(tmp_path, "unknown")
     with pytest.raises(ValueError):
         create_provider(tmp_path, "opencode")
+
+
+def test_product_evidence_does_not_implicitly_scan_files_or_trust_runtime_tools(
+    monkeypatch, tmp_path
+):
+    class Runtime:
+        def __init__(self, backend, workspace, *, model, allow_read):
+            assert allow_read is False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def prompt(self, request):
+            assert "ONLY_SELECTED" in request
+            assert "NOT_SELECTED" not in request
+            return SimpleNamespace(text="result", stop_reason="end_turn")
+
+    (tmp_path / "unselected.md").write_text("NOT_SELECTED")
+    monkeypatch.setattr("tacit.provider.AgentRuntime", Runtime)
+    assert (
+        ACPProvider(tmp_path, "kiro").run_evidence(
+            "question", [{"path": "selected.md", "content": "ONLY_SELECTED"}]
+        )
+        == "result"
+    )
