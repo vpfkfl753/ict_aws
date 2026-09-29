@@ -12,3 +12,27 @@ __pycache__/
 
 deploy/config/
 deploy/.env
+
+# Internal material kept out of the public repository
+.private/
+.claude/
+*_리서치.md
+*_리서치_보고서.md
+백지_아이디어_발산.md
+*_조사.md
+*_검토.md
+codex_research_prompt.md
+kiro_guides/
+docs/assets/
+docs/DEVELOPMENT_SSOT.md
+docs/FIRST_CONTACT.md
+docs/KIRO_VALIDATION.md
+docs/MILESTONE.md
+docs/RELAY_TUNNEL.md
+docs/SEONGWON_SETUP.md
+docs/V2_ROLLOUT.md
+docs/VERIFICATION.md
+docs/WOOSUNG_ONBOARDING.md
+demo/ACTUAL_EXPERIMENT.md
+demo/TACIT_DEMO_SCENARIOS.md
+demo/WORKFLOW_V2_SCENARIOS.md

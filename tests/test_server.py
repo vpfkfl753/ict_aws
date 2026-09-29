@@ -8,7 +8,7 @@ import pytest
 from tacit import server
 from tacit.client import RelayClient
 
-URL = "https://floral-establish-diffuser.ngrok-free.dev"
+URL = "https://relay.example.com"
 
 
 def project(tmp_path):

@@ -1,21 +1,6 @@
-# Tacit Agent Plane
+# Tacit 직접 설치·개발 안내
 
-목표 설계와 개발 범위는 [개발 SSOT](DEVELOPMENT_SSOT.md)를 따른다. Slack Home, 자율 자료 검색, 공유 승인, Agent 추가 대화의 구현·업데이트 절차는 [v2 운영 안내](WORKFLOW_V2.md)에 있다.
-
-첫 마일스톤: 이재용과 우성원이 실제 Slack DM을 주고받을 때 각자의 머신에서 실행되는 Agent가 로컬 맥락을 찾아 교환하고, 수신자에게 맞춘 설명을 표시한다.
-
-**v2 기능 코드는 구현되었고 운영 배포는 별도다.** 2026-09-21 확인한 운영 서버는 아직 protocol 1이다. 과거 두 머신 연결과 재용 → 성원 처리·알림, 성원 Kiro 실제 맥락 생성은 확인했다. 새 승인 UI·Agent 왕복의 실제 검증은 중앙·Slack 권한·워커 업데이트 후 진행한다. [기존 마일스톤](MILESTONE.md), [Kiro 실제 증거](KIRO_VALIDATION.md), [v2 실험 시나리오](../demo/WORKFLOW_V2_SCENARIOS.md)를 참고한다.
-
-재용 머신에 설치된 중앙 서버는 어느 디렉터리에서든 다음 명령으로 관리한다. 각 명령은 독립적으로 실행한다.
-
-```bash
-tacit-server on
-tacit-server off
-tacit-server status
-tacit-server logs
-```
-
-고정 주소: `https://floral-establish-diffuser.ngrok-free.dev`. `on`은 중계·Slack 커넥터·ngrok을 시작하고 자동 시작을 켠다. `off`는 셋을 종료하고 자동 시작도 끈다. 모델을 호출하는 사용자별 worker는 포함하지 않는다. [설치·운영 안내](RELAY_TUNNEL.md).
+심사용 데모는 [README](../README.md)에서 설치 없이 체험할 수 있다. 이 문서는 팀이 직접 설치해 쓰는 구성을 다룬다. 중계 서버와 Slack 커넥터는 한 곳에서 실행하고, 각 사용자는 자기 머신에서 worker와 실행기를 돌린다. v2 기능은 [v2 작업 흐름](WORKFLOW_V2.md)에 정리했다.
 
 ## 동작
 
@@ -33,11 +18,11 @@ tacit-server logs
 ```mermaid
 flowchart TB
   subgraph user[상위: User Plane]
-    A[이재용] <-->|Slack 일반 DM| B[우성원]
+    A[사용자 A] <-->|Slack 일반 DM| B[사용자 B]
   end
   subgraph agent[하위: Agent Plane]
-    WA[재용 머신: Worker + 선택한 실행기] <-->|HTTPS| R[중계 서버: 작업과 맥락 전달]
-    R <-->|HTTPS| WB[성원 머신: Worker + 선택한 실행기]
+    WA[A 머신: Worker + 선택한 실행기] <-->|HTTPS| R[중계 서버: 작업과 맥락 전달]
+    R <-->|HTTPS| WB[B 머신: Worker + 선택한 실행기]
   end
   S[Slack 커넥터: Socket Mode] --> R
   A -->|슬래시 명령| S
@@ -61,9 +46,9 @@ uv run pytest -q
 
 ```bash
 uv run python -m tacit.setup \
-  --team T08TM41TK4P \
-  --owner U09F4SENS3X \
-  --peer U0ABNAMVB7U \
+  --team T0123456789 \
+  --owner U0123456789 \
+  --peer U9876543210 \
   --workspace /absolute/path/to/your/context
 ```
 
@@ -73,10 +58,10 @@ uv run python -m tacit.setup \
 |---|---|---|
 | `relay.env` | 중계 서버 | 기본값으로 로컬 실행 가능 |
 | `slack.env` | Slack 커넥터 한 개 | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` |
-| `owner.env` | 재용 머신 | 본인의 `SLACK_USER_TOKEN`, 작업 폴더 |
-| `peer.env` | 성원 머신 | 본인의 `SLACK_USER_TOKEN`, 작업 폴더, 중계 주소 |
+| `owner.env` | A 머신 | 본인의 `SLACK_USER_TOKEN`, 작업 폴더 |
+| `peer.env` | B 머신 | 본인의 `SLACK_USER_TOKEN`, 작업 폴더, 중계 주소 |
 
-성원에게는 `peer.env`만 별도의 안전한 경로로 전달한다. `relay.env`는 두 사용자의 인증 토큰을 포함한다. 각자 자신의 에이전트 구독 로그인과 Slack 사용자 토큰을 사용한다.
+B에게는 `peer.env`만 별도의 안전한 경로로 전달한다. `relay.env`는 두 사용자의 인증 토큰을 포함한다. 각자 자신의 에이전트 구독 로그인과 Slack 사용자 토큰을 사용한다.
 
 각자의 `owner.env` 또는 `peer.env`에서 실행기를 선택한다. 두 사람이 서로 다른 실행기를 사용해도 된다.
 
@@ -89,10 +74,6 @@ uv run python -m tacit.setup \
 | `openai` | OpenAI 호환 게이트웨이, `TACIT_OPENAI_BASE_URL`·`TACIT_OPENAI_API_KEY` | 필수 |
 
 예를 들어 OpenCode를 쓸 사람은 `TACIT_BACKEND=opencode`, `TACIT_MODEL=openai/gpt-5.6-sol`로 설정한다. Kiro를 쓸 사람은 `TACIT_BACKEND=kiro`로 설정하고 `TACIT_MODEL`은 비우거나 Kiro 모델 ID로 바꾼다. 설치·로그인과 실제 계정 검증 상태는 [실행기 가이드](../tacit_runtime/README.md)를 참고한다. 실행기 변경 후 워커를 재시작해야 한다. 이미 생성된 작업의 캐시는 유지된다.
-
-Slack 앱 생성부터 두 머신 연결까지는 [첫 연결 가이드](FIRST_CONTACT.md)를 따른다.
-
-성원님에게 전달할 설치·연결 절차는 [우성원 연결 안내](SEONGWON_SETUP.md)에 별도로 정리했다. `peer.env`와 실제 서버 접속 정보는 문서 외에 따로 전달해야 한다.
 
 ## 실행 명령
 
@@ -110,7 +91,7 @@ uv run tacit --env-file .tacit/setup/owner.env doctor
 uv run tacit --env-file .tacit/setup/owner.env worker
 ```
 
-성원 머신에서는 `owner.env` 대신 전달받은 `peer.env`를 사용한다. 각 머신의 `TACIT_WORKSPACE`에는 그 사용자의 실제 작업 맥락이 있는 폴더를 지정한다.
+B 머신에서는 `owner.env` 대신 전달받은 `peer.env`를 사용한다. 각 머신의 `TACIT_WORKSPACE`에는 그 사용자의 실제 작업 맥락이 있는 폴더를 지정한다.
 
 로컬 API 상태: `http://127.0.0.1:8765/health`. 개발용 API 문서: `http://127.0.0.1:8765/docs`.
 

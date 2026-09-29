@@ -1,9 +1,6 @@
 # Slack Agent Plane v2 구현·운영
 
-2026-09-21. 개발 기준은 [DEVELOPMENT_SSOT.md](DEVELOPMENT_SSOT.md)다.
-이 문서의 기능은 코드·자동 테스트 기준이다. 현재 재용 머신의 운영 서버는 protocol 1이며,
-아래 업데이트가 반영되기 전에는 새 승인 화면이나 Home 기능이 활성화되지 않는다.
-기존 Kiro 실제 송신 증거와 이번 v2 자동 테스트 결과를 혼동하지 않는다.
+이 문서는 v2 기능과 기존 설치의 업데이트 절차를 설명한다. protocol 1 서버에서는 새 승인 화면과 Home 기능이 활성화되지 않는다.
 
 ## 사용 흐름
 
@@ -79,7 +76,7 @@ Home에 입력한 폴더는 로컬의 `TACIT_ALLOWED_ROOTS`를 넘어설 수 없
 
 ```dotenv
 # 이 개발 머신에서 허용하는 범위. 실제 연구 폴더는 포함하지 않는다.
-TACIT_ALLOWED_ROOTS=/home/user/work/ict_aws/examples:/home/user/work/ict_aws/demo
+TACIT_ALLOWED_ROOTS=/path/to/ict_aws/examples:/path/to/ict_aws/demo
 ```
 
 DM 자동 준비는 **기본 꺼짐**이다. Slack이 해당 설치·사용자 권한으로 전달하는 신규 1:1 DM
@@ -139,8 +136,6 @@ Agent 토큰은 자기 작업을 가져오고 처리하지만 사용자 승인 A
 
 ## 기존 설치 업데이트
 
-중앙과 양쪽 워커를 함께 전환하는 체크리스트는 [V2_ROLLOUT.md](V2_ROLLOUT.md)를 따른다.
-
 ### 원격 요청 절감
 
 원격 워커의 기본 작업 대기는 180초다. `/v2/work/claim?include_requests=true`가 작업과
@@ -179,7 +174,6 @@ protocol 1 서버에서는 기존 워커로 연결되며 승인 UI가 없다는 
 통합 브랜치의 추가 검증: `pytest -q` 107개 통과, `ruff check`와 Git 공백 검사 통과.
 연결 감시, 유휴 180초 단일 요청, 감사 요청의 대기 깨우기·소유자 격리, 대화 판별 실패 시
 비전송, v2 권한 검사, 모의 worker의 DM/Agent 전용 양방향 승인 흐름을 포함한다.
-운영 v2 배포·실제 승인 왕복은 아직 완료하지 않았다. 현재 상태는 [배포 문서](V2_ROLLOUT.md)를 참고한다.
 
 2026-09-21 최종 자동 검사: `uv run --no-sync pytest -q` 84개 통과,
 `ruff check` 및 Git 공백 검사 통과. 기존 59개에 승인·권한·검색·UI 경로 25개를 추가했다.
@@ -189,11 +183,7 @@ protocol 1 서버에서는 기존 워커로 연결되며 승인 UI가 없다는 
 재시작 후 미리보기 재전송, 웹 검색어 제한과 비공개 주소 차단을 확인한다.
 이는 실제 Slack·모델·상대 워커 검증의 대체물이 아니다.
 
-실제 실험 순서는 [WORKFLOW_V2_SCENARIOS.md](../demo/WORKFLOW_V2_SCENARIOS.md)에 있다.
-2026-09-21 개발 시점에는 중앙 서버 protocol 1과 이 머신의 기존 Kiro 워커 연결을 확인했다.
-중앙 머신 SSH·운영 자격증명은 이 머신에 없어 원격 업데이트를 실행하지 않았다.
-새 Slack 승인 버튼, 신규 권한, v2 모델 왕복, 상대 알림은 운영 업데이트 후 실검증할 항목이다.
-재용씨 수업 중 답장을 성공 근거로 요구하거나, 다른 사용자의 승인 버튼을 대신 누르지 않는다.
+클라우드 데모 서버(protocol 2)에서 실제 Slack·모델·두 워커를 거치는 승인 왕복을 확인했다. 체험 순서는 [README](../README.md)에 있다.
 
 Slack 재시도는 결정적 메시지 ID와 로컬 전송 대기열·중앙 확인 기록으로 줄인다.
 Slack이 메시지를 수락한 직후 응답이 끊기는 구간의 정확히 한 번 전송까지 보장하지 않는다.
