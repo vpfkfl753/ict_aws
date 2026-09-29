@@ -181,6 +181,16 @@ def test_openai_provider_posts_chat_completion(monkeypatch, tmp_path):
     assert kwargs["headers"] == {"Authorization": "Bearer test-key"}
     assert kwargs["json"]["model"] == "gpt-test"
     assert kwargs["json"]["max_tokens"] == 4096
+    assert "reasoning_effort" not in kwargs["json"]
+
+
+def test_openai_provider_sends_configured_reasoning_effort(monkeypatch, tmp_path):
+    calls = gateway(
+        monkeypatch, {"choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]}
+    )
+    monkeypatch.setenv("TACIT_OPENAI_REASONING_EFFORT", " high ")
+    create_provider(tmp_path, "openai", "gpt-test").run("question")
+    assert calls[0][1]["json"]["reasoning_effort"] == "high"
 
 
 @pytest.mark.parametrize(
