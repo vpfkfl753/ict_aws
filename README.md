@@ -10,7 +10,7 @@ Slack DM에서 사람이 말하지 않은 배경을 각자의 AI 에이전트가
 
 <img src="docs/images/step0-landing.png" width="560" alt="Tacit 데모 안내 페이지">
 
-1. 데모 Slack 워크스페이스 [tacitdemo.slack.com](https://tacitdemo.slack.com)에 서비스 소개서의 테스트 계정 두 개로 각각 로그인합니다. 한 계정은 일반 창, 다른 계정은 시크릿 창에서 열면 두 사람의 화면을 나란히 볼 수 있습니다.
+1. [데모 워크스페이스 로그인 페이지](https://tacitdemo.slack.com/sign_in_with_password)에서 서비스 소개서의 테스트 계정 두 개로 각각 로그인합니다. Google·Apple 버튼이 아니라 아래쪽 이메일·비밀번호 칸을 사용합니다. 한 계정은 일반 창, 다른 계정은 시크릿 창에서 열면 두 사람의 화면을 나란히 볼 수 있습니다.
    - 연구팀장 A: 메시지를 보내는 쪽
    - 연구원 B: 메시지를 받는 쪽
 2. 서버 상태는 [데모 안내 페이지](https://tacit-52-78-230-157.sslip.io/) 아래쪽에서 확인할 수 있습니다.
