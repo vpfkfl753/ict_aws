@@ -225,6 +225,8 @@ class OpenAIProvider:
                 "Set TACIT_OPENAI_BASE_URL, TACIT_OPENAI_API_KEY and TACIT_MODEL for openai"
             )
         self.model, self.timeout = model, timeout
+        # Gateways such as LiteLLM map reasoning_effort to the model's own effort setting.
+        self.effort = os.environ.get("TACIT_OPENAI_REASONING_EFFORT", "").strip()
 
     def run(self, prompt: str) -> str:
         return self._execute(request_with_sources(self.workspace, prompt))
@@ -233,16 +235,23 @@ class OpenAIProvider:
         return self._execute(evidence_request(prompt, sources))
 
     def _execute(self, request):
-        log.info("Agent inference started backend=openai model=%s", self.model)
+        log.info(
+            "Agent inference started backend=openai model=%s effort=%s",
+            self.model,
+            self.effort or "default",
+        )
+        body = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": request}],
+            "max_tokens": 4096,
+        }
+        if self.effort:
+            body["reasoning_effort"] = self.effort
         try:
             response = httpx.post(
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self.key}"},
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": request}],
-                    "max_tokens": 4096,
-                },
+                json=body,
                 timeout=self.timeout,
             )
             response.raise_for_status()

@@ -23,12 +23,14 @@ services:
     depends_on: [caddy]
 
   # Workers exit until the Slack connector registers the bot user; restart retries them.
+  # Both workers share one Kiro login (kiro-auth) when TACIT_BACKEND=kiro.
   worker-a:
     <<: *tacit
     command: [--env-file, /config/worker-a.env, worker]
     volumes:
       - ./config:/config:ro
       - worker-a-data:/data
+      - kiro-auth:/home/tacit/.local/share/kiro-cli
     depends_on: [caddy]
 
   worker-b:
@@ -37,6 +39,7 @@ services:
     volumes:
       - ./config:/config:ro
       - worker-b-data:/data
+      - kiro-auth:/home/tacit/.local/share/kiro-cli
     depends_on: [caddy]
 
   caddy:
@@ -62,5 +65,6 @@ volumes:
   relay-data:
   worker-a-data:
   worker-b-data:
+  kiro-auth:
   caddy-data:
   caddy-config:
