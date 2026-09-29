@@ -1,5 +1,6 @@
 import httpx
 import pytest
+from slack_sdk.errors import SlackApiError
 
 from tacit.slack import register_handlers
 from tacit.slack_compose import register_compose
@@ -149,6 +150,43 @@ def test_v2_unknown_conversation_never_dispatches(failure):
     )
     assert dispatched == []
     assert "전송을 중단" in replies[0]
+
+
+@pytest.mark.parametrize(
+    ("channel", "error", "expected"),
+    [
+        ("D1", "channel_not_found", "dm"),
+        ("D1", "ratelimited", None),
+        ("C1", "not_in_channel", None),
+    ],
+)
+def test_v2_human_dm_hidden_from_bot_is_dm_mode(channel, error, expected):
+    app, sent, replies = App(), [], []
+
+    class Members:
+        def conversations_members(self, **kwargs):
+            raise SlackApiError("lookup failed", {"ok": False, "error": error})
+
+    class Relay:
+        def request(self, method, path, **kwargs):
+            sent.append(kwargs["json"])
+            return {"id": "accepted"}
+
+    register_handlers(app, Relay(), "T1", protocol=2, bot_user="UBOT")
+    app.handlers["/tacit-send"](
+        ack=lambda: None,
+        command={
+            "team_id": "T1",
+            "user_id": "UA",
+            "trigger_id": "trigger",
+            "channel_id": channel,
+            "text": "<@UB> hello",
+        },
+        respond=replies.append,
+        client=Members(),
+    )
+    assert [s["mode"] for s in sent] == ([expected] if expected else [])
+    assert expected or "전송을 중단" in replies[0]
 
 
 @pytest.mark.parametrize("mode", ["agent", "dm", "broadcast", "paginated"])

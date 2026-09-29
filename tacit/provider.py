@@ -6,6 +6,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import boto3
+import httpx
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
+
 from tacit.sources import read_sources
 from tacit_runtime import AgentRuntime
 
@@ -75,7 +80,11 @@ def create_provider(workspace: Path, backend: str = "codex", model: str | None =
         return CodexProvider(workspace, model)
     if backend in {"kiro", "opencode"}:
         return ACPProvider(workspace, backend, model)
-    raise ValueError("TACIT_BACKEND must be codex, kiro, or opencode")
+    if backend == "bedrock":
+        return BedrockProvider(workspace, model)
+    if backend == "openai":
+        return OpenAIProvider(workspace, model)
+    raise ValueError("TACIT_BACKEND must be codex, kiro, opencode, bedrock, or openai")
 
 
 class CodexProvider:
@@ -144,6 +153,115 @@ class CodexProvider:
             return validated_response(text)
 
 
+FALLBACK_ERRORS = {"AccessDeniedException", "ResourceNotFoundException", "ThrottlingException"}
+
+
+class BedrockProvider:
+    """Amazon Bedrock Converse with credentials from the default AWS chain (instance role)."""
+
+    backend = "bedrock"
+
+    def __init__(self, workspace: Path, model: str | None = None):
+        self.workspace = workspace.resolve(strict=True)
+        if not self.workspace.is_dir():
+            raise ValueError("Agent workspace must be a directory")
+        self.model = model or "global.anthropic.claude-opus-4-6-v1"
+        self.client = boto3.client(
+            "bedrock-runtime",
+            region_name=os.environ.get("TACIT_BEDROCK_REGION", "us-east-1"),
+            config=Config(read_timeout=240, retries={"max_attempts": 2, "mode": "standard"}),
+        )
+
+    def run(self, prompt: str) -> str:
+        return self._execute(request_with_sources(self.workspace, prompt))
+
+    def run_evidence(self, prompt, sources):
+        return self._execute(evidence_request(prompt, sources))
+
+    def _execute(self, request):
+        # A comma-separated model list falls back when a model is not yet enabled.
+        models = [m.strip() for m in self.model.split(",") if m.strip()]
+        for index, model in enumerate(models):
+            log.info("Agent inference started backend=bedrock model=%s", model)
+            try:
+                response = self.client.converse(
+                    modelId=model,
+                    messages=[{"role": "user", "content": [{"text": request}]}],
+                    inferenceConfig={"maxTokens": 4096},
+                )
+                break
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code", "unknown")
+                if index + 1 < len(models) and code in FALLBACK_ERRORS:
+                    log.warning("Bedrock model unavailable (%s); trying next model", code)
+                    continue
+                raise RuntimeError(f"Bedrock request failed: {code}") from None
+            except BotoCoreError as exc:
+                raise RuntimeError(f"Bedrock request failed: {type(exc).__name__}") from None
+        reason = response.get("stopReason")
+        log.info("Agent inference finished backend=bedrock stop_reason=%s", reason)
+        if reason == "max_tokens":
+            raise RuntimeError("Bedrock response was truncated")
+        blocks = response.get("output", {}).get("message", {}).get("content", [])
+        text = "".join(block["text"] for block in blocks if "text" in block)
+        if not text.strip():
+            raise RuntimeError("Bedrock returned no final response")
+        return validated_response(text)
+
+
+class OpenAIProvider:
+    """OpenAI-compatible chat completions gateway configured only through the environment."""
+
+    backend = "openai"
+
+    def __init__(self, workspace: Path, model: str | None = None, timeout: int = 240):
+        self.workspace = workspace.resolve(strict=True)
+        if not self.workspace.is_dir():
+            raise ValueError("Agent workspace must be a directory")
+        self.base_url = os.environ.get("TACIT_OPENAI_BASE_URL", "").rstrip("/")
+        self.key = os.environ.get("TACIT_OPENAI_API_KEY", "")
+        if not self.base_url or not self.key or not model:
+            raise ValueError(
+                "Set TACIT_OPENAI_BASE_URL, TACIT_OPENAI_API_KEY and TACIT_MODEL for openai"
+            )
+        self.model, self.timeout = model, timeout
+
+    def run(self, prompt: str) -> str:
+        return self._execute(request_with_sources(self.workspace, prompt))
+
+    def run_evidence(self, prompt, sources):
+        return self._execute(evidence_request(prompt, sources))
+
+    def _execute(self, request):
+        log.info("Agent inference started backend=openai model=%s", self.model)
+        try:
+            response = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.key}"},
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": request}],
+                    "max_tokens": 4096,
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            choice = dict(response.json()["choices"][0])
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"Gateway returned HTTP {exc.response.status_code}") from None
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError(f"Gateway request failed: {type(exc).__name__}") from None
+        log.info(
+            "Agent inference finished backend=openai finish_reason=%s", choice.get("finish_reason")
+        )
+        if choice.get("finish_reason") == "length":
+            raise RuntimeError("Gateway response was truncated")
+        text = (choice.get("message") or {}).get("content") or ""
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("Gateway returned no final response")
+        return validated_response(text)
+
+
 def prepare_prompt(exchange):
     return f"""You are the sender's context agent in a two-person communication service.
 Use the local file excerpts supplied below to explain the unstated background of
@@ -157,8 +275,6 @@ or explain experiment labels. No headings, tables, packet labels, user IDs, or r
 When files contain no evidence, say so; never invent background. Include only
 background relevant to this message. Do not answer on behalf of either person.
 
-Sender: {exchange["sender"]}
-Recipient: {exchange["recipient"]}
 <message>
 {exchange["text"]}
 </message>
@@ -175,7 +291,7 @@ and unknowns. Cite relevant relative file paths. Never claim a user approved or
 confirmed something unless there is explicit evidence. Return at most 2500
 characters. This explanation will be shown privately to the recipient.
 
-<message sender="{exchange["sender"]}">
+<message>
 {exchange["text"]}
 </message>
 <sender_context>

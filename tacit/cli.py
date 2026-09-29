@@ -45,11 +45,18 @@ def main():
 
     if args.command == "doctor":
         backend = os.environ.get("TACIT_BACKEND", "codex")
-        if backend not in {"codex", "kiro", "opencode"}:
-            raise ValueError("TACIT_BACKEND must be codex, kiro, or opencode")
-        executable = shutil.which("codex") if backend == "codex" else resolve_executable(backend)
+        if backend not in {"codex", "kiro", "opencode", "bedrock", "openai"}:
+            raise ValueError("TACIT_BACKEND must be codex, kiro, opencode, bedrock, or openai")
+        api = backend in {"bedrock", "openai"}
+        executable = None
         print(f"Agent backend: {backend}")
-        print(f"Agent executable: {executable or 'MISSING'}")
+        if api:
+            print("Agent executable: not needed (API backend)")
+        else:
+            executable = (
+                shutil.which("codex") if backend == "codex" else resolve_executable(backend)
+            )
+            print(f"Agent executable: {executable or 'MISSING'}")
         for name in (
             "TACIT_RELAY_URL",
             "TACIT_AGENT_TOKEN",
@@ -65,6 +72,8 @@ def main():
             subprocess.run(["codex", "login", "status"], check=False, timeout=20)
         elif executable:
             print("Native subscription login must be checked; --probe makes a real model request.")
+        elif api:
+            print("API credentials come from the environment; --probe makes a real model request.")
         if args.probe:
             provider = create_provider(
                 Path(required("TACIT_WORKSPACE")), backend, os.environ.get("TACIT_MODEL")

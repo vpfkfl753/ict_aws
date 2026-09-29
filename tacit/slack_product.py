@@ -44,7 +44,7 @@ def settings_view(settings):
         text_input("workspace", "자료 폴더 (로컬 허용 범위 안에서)", settings["workspace"], True),
         text_input(
             "backend",
-            "실행기: kiro / codex / opencode (빈칸: 로컬 기본)",
+            "실행기: kiro / codex / opencode / bedrock / openai (빈칸: 로컬 기본)",
             settings["backend"],
             True,
         ),
@@ -54,6 +54,7 @@ def settings_view(settings):
         {"text": {"type": "plain_text", "text": label}, "value": key}
         for key, label in (
             ("web", "웹검색"),
+            ("history", "대화 기록 참고"),
             ("auto_receive", "자동 tacit receive"),
             ("auto_send", "자동 tacit send"),
             ("auto_share", "승인 없이 자동 공유"),
@@ -219,18 +220,24 @@ def register_product(app, relay, team):
             key: (values[key]["value"].get("value") or "").strip()
             for key in ("workspace", "backend", "model")
         }
-        if settings["backend"] not in {"", "kiro", "codex", "opencode"}:
+        if settings["backend"] not in {"", "kiro", "codex", "opencode", "bedrock", "openai"}:
             ack(
                 response_action="errors",
-                errors={"backend": "kiro, codex, opencode 중 선택해주세요."},
+                errors={"backend": "kiro, codex, opencode, bedrock, openai 중 선택해주세요."},
             )
             return
         if settings["backend"] == "opencode" and not settings["model"].startswith("openai/"):
             ack(response_action="errors", errors={"model": "openai/모델 이름 형식이 필요합니다."})
             return
+        if settings["backend"] == "openai" and not settings["model"]:
+            ack(response_action="errors", errors={"model": "openai 실행기는 모델 ID가 필요합니다."})
+            return
         flags = {o["value"] for o in values["flags"]["value"].get("selected_options", [])}
         settings.update(
-            {key: key in flags for key in ("web", "auto_receive", "auto_send", "auto_share")}
+            {
+                key: key in flags
+                for key in ("web", "history", "auto_receive", "auto_send", "auto_share")
+            }
         )
         ack()
         relay.request("POST", "/v2/settings", params={"owner": body["user"]["id"]}, json=settings)
@@ -299,10 +306,15 @@ def register_product(app, relay, team):
         task = relay.request(
             "GET", "/v2/exchanges/latest", params={"owner": owner, "exchange_id": meta["id"]}
         )
-        if not task or task["owner"] != owner or task["version"] != meta["version"]:
+        kind = action["action_id"][6:]
+        if (
+            not task
+            or task["owner"] != owner
+            or task["version"] != meta["version"]
+            or task["state"] != ("user_wait" if kind == "user_answer" else "approval_wait")
+        ):
             respond("현재 작업 소유자·버전과 맞지 않습니다. 최신 승인 메시지를 사용해주세요.")
             return
-        kind = action["action_id"][6:]
         if kind in {"approve", "cancel"}:
             try:
                 relay.request(
@@ -310,16 +322,18 @@ def register_product(app, relay, team):
                     f"/v2/decisions/{meta['id']}",
                     json={"owner": owner, "version": meta["version"], "action": kind},
                 )
+                # An ephemeral preview in the DM is replaced so its buttons disappear.
                 respond(
                     response_type="ephemeral",
-                    replace_original=False,
+                    replace_original=bool(body.get("container", {}).get("is_ephemeral")),
                     text="승인했습니다." if kind == "approve" else "공유를 취소했습니다.",
                 )
             except Exception:
                 respond("처리 상태가 바뀌었거나 연결되지 않았습니다. Home에서 상태를 확인해주세요.")
             return
-        # Slack sends the displayed preview in the interaction payload; it is
-        # transiently used to fill the editor and never persisted before submit.
+        # Slack sends the displayed preview in the clicked button or, for normal
+        # messages, the payload; it only fills the editor and is never persisted.
+        shown = meta.pop("text", "")
         preview = "".join(
             b.get("text", {}).get("text", "")
             for b in body.get("message", {}).get("blocks", [])
@@ -327,7 +341,10 @@ def register_product(app, relay, team):
         )
         draft = (
             (
-                draft_text(body.get("message", {}).get("blocks", []), meta["id"], meta["version"])
+                (shown if isinstance(shown, str) else "")
+                or draft_text(
+                    body.get("message", {}).get("blocks", []), meta["id"], meta["version"]
+                )
                 or preview.split("\n\n", 1)[-1]
             )
             if kind == "edit"

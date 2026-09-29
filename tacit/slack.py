@@ -6,6 +6,7 @@ import time
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from slack_sdk.errors import SlackApiError
 
 from tacit.slack_compose import compose_view, register_compose
 
@@ -27,7 +28,16 @@ def send_mode(client, channel, bot_user):
         options = {"channel": channel}
         if cursor:
             options["cursor"] = cursor
-        response = client.conversations_members(**options)
+        try:
+            response = client.conversations_members(**options)
+        except SlackApiError as exc:
+            # The bot is a member of its own DM; a DM it cannot see is between people.
+            if channel.startswith("D") and exc.response.get("error") in {
+                "channel_not_found",
+                "not_in_channel",
+            }:
+                return "dm"
+            raise
         members = response["members"]
         if (
             not isinstance(members, list)
