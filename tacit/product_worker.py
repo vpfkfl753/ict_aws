@@ -237,7 +237,8 @@ class ProductWorker(Worker):
             if (
                 message.get("ts") == source["ts"]
                 or message.get("subtype")
-                or message.get("bot_id")
+                # Originals sent through Tacit carry bot_id but are authored by a
+                # participant; the Tacit bot's own messages fail the author check.
                 or message.get("user") not in names
                 or not isinstance(message.get("text"), str)
             ):
