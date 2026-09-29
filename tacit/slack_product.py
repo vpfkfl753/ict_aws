@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 
-from tacit.presentation import card_blocks, compact, draft_text, plain_blocks
+from tacit.presentation import agent_badge, card_blocks, compact, draft_text, plain_blocks
 
 
 def modal(title, callback, metadata, blocks, submit="저장"):
@@ -323,10 +323,12 @@ def register_product(app, relay, team):
                     json={"owner": owner, "version": meta["version"], "action": kind},
                 )
                 # An ephemeral preview in the DM is replaced so its buttons disappear.
+                done = "승인했습니다." if kind == "approve" else "공유를 취소했습니다."
                 respond(
                     response_type="ephemeral",
                     replace_original=bool(body.get("container", {}).get("is_ephemeral")),
-                    text="승인했습니다." if kind == "approve" else "공유를 취소했습니다.",
+                    text=done,
+                    blocks=[agent_badge(), *plain_blocks(done)],
                 )
             except Exception:
                 respond("처리 상태가 바뀌었거나 연결되지 않았습니다. Home에서 상태를 확인해주세요.")

@@ -1038,6 +1038,8 @@ def test_dm_mode_keeps_both_users_in_original_dm_without_bot_thread(system, tmp_
     [preview] = slack.messages
     assert preview["ephemeral"] and preview["channel"] == "D1" and preview["user"] == "UA"
     assert "PRIVATE_DRAFT" in visible(preview)
+    # The user's token posts it, so the first line names Tacit as the speaker.
+    assert preview["blocks"][0]["type"] == "context" and "Tacit 에이전트" in visible(preview)
     with store.db() as db:
         assert "PRIVATE_DRAFT" not in db.execute("SELECT body FROM workflows").fetchone()[0]
     bridge.request(
@@ -1051,6 +1053,7 @@ def test_dm_mode_keeps_both_users_in_original_dm_without_bot_thread(system, tmp_
     [result] = ephemerals(slack, "UB")
     assert result["channel"] == "D1"
     assert "나를 위한 설명" in visible(result) and "내 조건과 B17 p2" in visible(result)
+    assert result["blocks"][0]["type"] == "context"
     assert len(ephemerals(slack, "UA")) == 1
     for worker in workers.values():
         worker.flush_notices()
