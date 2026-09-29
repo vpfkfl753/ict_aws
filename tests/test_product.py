@@ -949,3 +949,406 @@ def test_review_submission_preserves_exact_user_text_and_approval_kind(system, e
     work = flow.claim("UA")
     flow.change(task["id"], "UA", "publish", value, lease=work["lease"])
     assert flow.get("UB")["context"] == value
+
+
+class DMSlack(Slack):
+    def __init__(self, history=(), fail=False):
+        super().__init__()
+        self.history, self.fail, self.reads = list(history), fail, []
+
+    def conversations_history(self, **kwargs):
+        self.reads.append(kwargs)
+        if self.fail:
+            raise RuntimeError("missing_scope")
+        return {"messages": self.history}
+
+
+class Recorder(Model):
+    def __init__(self, workspace, ask=False):
+        super().__init__(workspace)
+        self.ask, self.calls = ask, []
+
+    def run_evidence(self, prompt, sources):
+        self.calls.append((prompt, sources))
+        if self.ask and "recipient agent" in prompt and '"user_answer": null' in prompt:
+            return '{"action":"ask_user","text":"LOCAL 내 쪽 조건을 알려주세요."}'
+        return super().run_evidence(prompt, sources)
+
+
+def dm_workers(agents, slack, tmp_path, monkeypatch, model):
+    workspace = tmp_path / "corpus"
+    workspace.mkdir(exist_ok=True)
+    monkeypatch.setattr("tacit.product_worker.create_provider", lambda *args: model)
+    return {
+        u: ProductWorker(
+            agents[u],
+            model,
+            slack,
+            tmp_path / u,
+            owner=u,
+            allowed_roots=[workspace],
+            bot_user="UBOT",
+            wait_seconds=0,
+        )
+        for u in ("UA", "UB")
+    }
+
+
+def ephemerals(slack, user):
+    return [m for m in slack.messages if m.get("ephemeral") and m["user"] == user]
+
+
+def visible(message):
+    return json.dumps(message["blocks"], ensure_ascii=False)
+
+
+def clicked(message, action_id, user):
+    button = next(
+        e
+        for b in message["blocks"]
+        if b["type"] == "actions"
+        for e in b["elements"]
+        if e["action_id"] == action_id
+    )
+    # Ephemeral interaction payloads carry the container but not the message.
+    return {
+        "team": {"id": "TEAM"},
+        "user": {"id": user},
+        "trigger_id": "trigger",
+        "container": {"type": "message", "is_ephemeral": True},
+        "actions": [button],
+    }
+
+
+class Views:
+    def __init__(self):
+        self.opened = []
+
+    def views_open(self, **kwargs):
+        self.opened.append(kwargs["view"])
+
+
+def test_dm_mode_keeps_both_users_in_original_dm_without_bot_thread(system, tmp_path, monkeypatch):
+    store, flow, bridge, agents = system
+    slack = DMSlack()
+    workers = dm_workers(agents, slack, tmp_path, monkeypatch, Model(tmp_path / "corpus"))
+    task = create(flow)
+    assert workers["UA"].once()
+    assert not workers["UA"].notices_waiting
+    [preview] = slack.messages
+    assert preview["ephemeral"] and preview["channel"] == "D1" and preview["user"] == "UA"
+    assert "PRIVATE_DRAFT" in visible(preview)
+    with store.db() as db:
+        assert "PRIVATE_DRAFT" not in db.execute("SELECT body FROM workflows").fetchone()[0]
+    bridge.request(
+        "POST",
+        "/v2/decisions/" + task["id"],
+        json={"owner": "UA", "version": 1, "action": "approve"},
+    )
+    assert workers["UA"].once()
+    assert workers["UB"].once()
+    assert flow.get("UB")["state"] == "completed"
+    [result] = ephemerals(slack, "UB")
+    assert result["channel"] == "D1"
+    assert "나를 위한 설명" in visible(result) and "내 조건과 B17 p2" in visible(result)
+    assert len(ephemerals(slack, "UA")) == 1
+    for worker in workers.values():
+        worker.flush_notices()
+        worker.once()
+    assert len(slack.messages) == 2
+    assert not any(m.get("ephemeral") is None for m in slack.messages)
+
+
+def test_dm_result_is_not_pushed_again_as_a_new_bot_message(system, tmp_path, monkeypatch):
+    _, flow, bridge, agents = system
+    slack = DMSlack()
+    workers = dm_workers(agents, slack, tmp_path, monkeypatch, Model(tmp_path / "corpus"))
+    task = create(flow)
+    notify_product_once(bridge, slack)
+    workers["UA"].once()
+    bridge.request(
+        "POST",
+        "/v2/decisions/" + task["id"],
+        json={"owner": "UA", "version": 1, "action": "approve"},
+    )
+    workers["UA"].once()
+    workers["UB"].once()
+    for _ in range(10):
+        notify_product_once(bridge, slack)
+    posted = [m for m in slack.messages if not m.get("ephemeral")]
+    assert all("내 조건" not in json.dumps(m, ensure_ascii=False) for m in posted)
+    assert any("내 조건" in json.dumps(u, ensure_ascii=False) for u in slack.updates)
+    assert any("내 조건" in visible(m) for m in ephemerals(slack, "UB"))
+    assert flow.deliveries() == []
+
+
+def test_dm_result_waits_for_view_button_when_auto_receive_is_off(system, tmp_path, monkeypatch):
+    from tacit.slack_product import register_product
+
+    _, flow, bridge, agents = system
+    flow.settings("UB", {"auto_receive": False})
+    slack = DMSlack()
+    workers = dm_workers(agents, slack, tmp_path, monkeypatch, Model(tmp_path / "corpus"))
+    task = draft(flow, create(flow), "PRIVATE_DRAFT: B17 p2. evidence.md")
+    approve(flow, task, "PRIVATE_DRAFT: B17 p2. evidence.md")
+    assert workers["UB"].once()
+    [ready] = ephemerals(slack, "UB")
+    assert ready["channel"] == "D1"
+    assert "설명이 준비됐어요" in visible(ready) and "내 조건" not in visible(ready)
+    app, ui = CardApp(), Views()
+    register_product(app, bridge, "TEAM")
+    app.handlers["history"](lambda: None, clicked(ready, "tacit_result", "UB"), ui)
+    assert "내 조건과 B17 p2" in json.dumps(ui.opened, ensure_ascii=False)
+    app.handlers["history"](lambda: None, clicked(ready, "tacit_result", "UA"), ui)
+    assert "내 조건" not in json.dumps(ui.opened[-1], ensure_ascii=False)
+
+
+def test_dm_clarification_is_answered_from_original_dm(system, tmp_path, monkeypatch):
+    from tacit.slack_product import register_product
+
+    store, flow, bridge, agents = system
+    slack = DMSlack()
+    workers = dm_workers(
+        agents, slack, tmp_path, monkeypatch, Recorder(tmp_path / "corpus", ask=True)
+    )
+    task = draft(flow, create(flow), "PRIVATE_DRAFT: B17 p2. evidence.md")
+    approve(flow, task, "PRIVATE_DRAFT: B17 p2. evidence.md")
+    assert workers["UB"].once()
+    assert flow.get("UB")["state"] == "user_wait"
+    [question] = ephemerals(slack, "UB")
+    assert question["channel"] == "D1" and "LOCAL 내 쪽 조건" in visible(question)
+    with store.db() as db:
+        assert "LOCAL" not in db.execute("SELECT body FROM workflows").fetchone()[0]
+    app, ui, replies = CardApp(), Views(), []
+    register_product(app, bridge, "TEAM")
+    body = clicked(question, "tacit_user_answer", "UB")
+    for user in ("UA", "UB"):
+        app.handlers["decision"](
+            lambda: None,
+            {**body, "user": {"id": user}},
+            ui,
+            lambda *a, **k: replies.append((a, k)),
+        )
+    assert len(replies) == 1 and len(ui.opened) == 1
+    meta = json.loads(ui.opened[0]["private_metadata"])
+    assert meta == {"id": task["id"], "version": 2, "action": "user_answer"}
+    app.handlers["decision_save"](
+        lambda **kwargs: None,
+        {"team": {"id": "TEAM"}, "user": {"id": "UB"}},
+        {**ui.opened[0], "state": {"values": {"answer": {"value": {"value": "내 조건은 p3"}}}}},
+        None,
+    )
+    assert flow.get("UB")["state"] == "interpret_pending"
+    app.handlers["decision"](lambda: None, body, ui, lambda *a, **k: replies.append((a, k)))
+    assert len(replies) == 2 and len(ui.opened) == 1
+    assert workers["UB"].once()
+    assert flow.get("UB")["state"] == "completed"
+    assert "내 조건과 B17 p2" in visible(ephemerals(slack, "UB")[-1])
+
+
+def test_ephemeral_edit_prefills_shown_preview_and_rejects_stale_buttons(
+    system, tmp_path, monkeypatch
+):
+    from tacit.slack_product import register_product
+
+    store, flow, bridge, agents = system
+    slack = DMSlack()
+    workers = dm_workers(agents, slack, tmp_path, monkeypatch, Model(tmp_path / "corpus"))
+    task = create(flow)
+    workers["UA"].once()
+    [preview] = slack.messages
+    app, ui, replies = CardApp(), Views(), []
+    register_product(app, bridge, "TEAM")
+
+    def respond(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    app.handlers["decision"](lambda: None, clicked(preview, "tacit_edit", "UA"), ui, respond)
+    [editor] = ui.opened
+    assert editor["blocks"][0]["element"]["initial_value"] == "PRIVATE_DRAFT: B17 p2. evidence.md"
+    assert json.loads(editor["private_metadata"]) == {
+        "id": task["id"],
+        "version": 1,
+        "action": "edit",
+    }
+    with store.db() as db:
+        assert "PRIVATE_DRAFT" not in db.execute("SELECT body FROM workflows").fetchone()[0]
+    app.handlers["decision"](lambda: None, clicked(preview, "tacit_approve", "UA"), ui, respond)
+    assert replies[-1][1]["replace_original"] is True
+    assert flow.get("UA")["state"] == "publish_pending"
+    for action in ("tacit_edit", "tacit_approve", "tacit_cancel"):
+        app.handlers["decision"](lambda: None, clicked(preview, action, "UA"), ui, respond)
+    assert len(ui.opened) == 1 and len(replies) == 4
+    assert all("최신" in args[0] for args, _ in replies[1:])
+    assert flow.get("UA")["state"] == "publish_pending"
+
+
+def test_long_draft_is_not_embedded_in_edit_button(system, tmp_path):
+    _, flow, _, agents = system
+    worker = ProductWorker(
+        agents["UA"],
+        Model(tmp_path),
+        Slack(),
+        tmp_path / "state",
+        owner="UA",
+        allowed_roots=[tmp_path],
+        bot_user="UBOT",
+        wait_seconds=0,
+    )
+    create(flow, mode="agent")
+    work = flow.claim("UA")
+    worker.approval(work, "가" * 2500)
+    [outbox] = (tmp_path / "state").glob("*-outbox.json")
+    values = [json.loads(a["value"]) for a in json.loads(outbox.read_text())["actions"]]
+    assert all(set(v) == {"id", "version"} for v in values)
+
+
+def test_dm_preview_requested_from_card_is_shown_in_bot_thread(system, tmp_path, monkeypatch):
+    _, flow, bridge, agents = system
+    slack = DMSlack()
+    workers = dm_workers(agents, slack, tmp_path, monkeypatch, Model(tmp_path / "corpus"))
+    task = create(flow)
+    notify_product_once(bridge, slack)
+    workers["UA"].once()
+    assert ephemerals(slack, "UA")[0]["channel"] == "D1"
+    flow.request_preview("UA", task["id"], 1)
+    workers["UA"].once()
+    assert [m["channel"] for m in ephemerals(slack, "UA")] == ["D1", "DUA"]
+
+
+HISTORY = [
+    {"ts": "1", "user": "UA", "text": "CURRENT ORIGINAL"},
+    {"ts": "0.9", "user": "UB", "text": "<@UA> 어제 B17 결과 봤어?"},
+    {"ts": "0.8", "bot_id": "B1", "user": "UBOT", "text": "BOT NOISE"},
+    {"ts": "0.7", "subtype": "channel_join", "user": "UB", "text": "JOINED"},
+    {"ts": "0.6", "user": "UA", "text": "p2 전처리로 다시 돌렸어 <@UC|철수>"},
+    {"ts": "0.5", "user": "UC", "text": "OUTSIDER"},
+]
+
+
+def history_sources(model):
+    return [s for _, sources in model.calls for s in sources if s.get("path") == "slack:dm-history"]
+
+
+def test_dm_history_is_local_evidence_for_sender_and_recipient(system, tmp_path, monkeypatch):
+    store, flow, bridge, agents = system
+    slack = DMSlack(HISTORY)
+    model = Recorder(tmp_path / "corpus")
+    workers = dm_workers(agents, slack, tmp_path, monkeypatch, model)
+    task = create(flow)
+    workers["UA"].once()
+    [sender] = {s["content"]: s for s in history_sources(model)}.values()
+    assert slack.reads[0]["channel"] == "D1" and slack.reads[0]["latest"] == "1"
+    lines = sender["content"].splitlines()[1:]
+    assert lines == ["나: p2 전처리로 다시 돌렸어 철수", "상대: 나 어제 B17 결과 봤어?"]
+    for noise in ("CURRENT", "BOT", "JOINED", "OUTSIDER", "<@"):
+        assert noise not in sender["content"]
+    bridge.request(
+        "POST",
+        "/v2/decisions/" + task["id"],
+        json={"owner": "UA", "version": 1, "action": "approve"},
+    )
+    workers["UA"].once()
+    model.calls.clear()
+    workers["UB"].once()
+    [recipient] = {s["content"]: s for s in history_sources(model)}.values()
+    assert recipient["content"].splitlines()[1:] == [
+        "상대: p2 전처리로 다시 돌렸어 철수",
+        "나: 상대 어제 B17 결과 봤어?",
+    ]
+    with store.db() as db:
+        assert "B17 결과" not in db.execute("SELECT body FROM workflows").fetchone()[0]
+    audit = (tmp_path / "UB" / f"{task['id']}-audit.jsonl").read_text()
+    assert '"kind": "history", "count": 2' in audit
+
+
+def test_dm_history_is_capped_and_skipped_for_agent_mode(system, tmp_path, monkeypatch):
+    _, flow, _, agents = system
+    long = [
+        {"ts": f"0.{i:03}", "user": "UB", "text": f"{i} " + "긴 대화 " * 60}
+        for i in range(999, 940, -1)
+    ]
+    slack = DMSlack(long)
+    model = Recorder(tmp_path / "corpus")
+    workers = dm_workers(agents, slack, tmp_path, monkeypatch, model)
+    create(flow)
+    workers["UA"].once()
+    item = history_sources(model)[-1]
+    lines = item["content"].splitlines()[1:]
+    assert item["truncated"] and len(lines) <= 30 and len(item["content"]) <= 6100
+    assert lines[-1].startswith("상대: 999 ")
+    create(flow, "agent", mode="agent")
+    model.calls.clear()
+    workers["UA"].once()
+    assert len(slack.reads) == 1 and history_sources(model) == []
+
+
+@pytest.mark.parametrize("failure", ["preference", "error"])
+def test_dm_history_respects_preference_and_tolerates_errors(
+    system, tmp_path, monkeypatch, failure
+):
+    _, flow, _, agents = system
+    if failure == "preference":
+        flow.settings("UA", {"history": False})
+    slack = DMSlack(HISTORY, fail=failure == "error")
+    model = Recorder(tmp_path / "corpus")
+    workers = dm_workers(agents, slack, tmp_path, monkeypatch, model)
+    task = create(flow)
+    assert workers["UA"].once()
+    assert flow.get("UA", task["id"])["state"] == "approval_wait"
+    assert history_sources(model) == []
+    assert len(slack.reads) == (0 if failure == "preference" else 1)
+    audit = (tmp_path / "UA" / f"{task['id']}-audit.jsonl").read_text()
+    assert ("history_failed" in audit) == (failure == "error")
+
+
+def test_history_preference_default_validation_and_home_checkbox(system):
+    from tacit.slack_product import register_product, settings_view
+
+    _, flow, bridge, _ = system
+    assert flow.settings("UA")["history"] is True
+    with pytest.raises(Conflict):
+        flow.settings("UA", {"history": "yes"})
+    view = settings_view(flow.settings("UA"))
+    flags = next(b for b in view["blocks"] if b["block_id"] == "flags")["element"]
+    assert "history" in {o["value"] for o in flags["initial_options"]}
+    published = []
+
+    class Home:
+        def views_publish(self, **kwargs):
+            published.append(kwargs)
+
+    app = CardApp()
+    register_product(app, bridge, "TEAM")
+    values = {k: {"value": {"value": ""}} for k in ("workspace", "backend", "model")}
+    values["flags"] = {"value": {"selected_options": [{"value": "web"}]}}
+    app.handlers["save"](
+        lambda **kwargs: None,
+        {"team": {"id": "TEAM"}, "user": {"id": "UA"}},
+        {"state": {"values": values}},
+        Home(),
+    )
+    assert flow.settings("UA")["history"] is False and flow.settings("UA")["web"] is True
+    assert published
+
+
+def test_dm_notice_rejected_by_slack_falls_back_to_tacit_card(system, tmp_path, monkeypatch):
+    from slack_sdk.errors import SlackApiError
+
+    _, flow, bridge, agents = system
+
+    class Rejecting(DMSlack):
+        def chat_postEphemeral(self, **kwargs):
+            if kwargs["channel"] == "D1":
+                raise SlackApiError("rejected", {"error": "channel_not_found"})
+            return super().chat_postEphemeral(**kwargs)
+
+    slack = Rejecting()
+    workers = dm_workers(agents, slack, tmp_path, monkeypatch, Model(tmp_path / "corpus"))
+    create(flow)
+    assert workers["UA"].once()
+    assert workers["UA"].notices_waiting and slack.messages == []
+    notify_product_once(bridge, slack)
+    workers["UA"].flush_notices()
+    assert [m["channel"] for m in ephemerals(slack, "UA")] == ["DUA"]
+    assert flow.get("UA")["state"] == "approval_wait"

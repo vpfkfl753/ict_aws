@@ -9,3 +9,6 @@ __pycache__/
 .ruff_cache/
 .tacit/
 *.sqlite3*
+
+deploy/config/
+deploy/.env

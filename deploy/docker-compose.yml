@@ -1,0 +1,66 @@
+name: tacit
+
+x-tacit: &tacit
+  build:
+    context: ..
+  image: tacit:demo
+  restart: unless-stopped
+  init: true
+
+services:
+  relay:
+    <<: *tacit
+    command: [--env-file, /config/relay.env, relay, --host, 0.0.0.0, --port, "8765"]
+    volumes:
+      - ./config:/config:ro
+      - relay-data:/data
+
+  slack:
+    <<: *tacit
+    command: [--env-file, /config/slack.env, slack]
+    volumes:
+      - ./config:/config:ro
+    depends_on: [caddy]
+
+  # Workers exit until the Slack connector registers the bot user; restart retries them.
+  worker-a:
+    <<: *tacit
+    command: [--env-file, /config/worker-a.env, worker]
+    volumes:
+      - ./config:/config:ro
+      - worker-a-data:/data
+    depends_on: [caddy]
+
+  worker-b:
+    <<: *tacit
+    command: [--env-file, /config/worker-b.env, worker]
+    volumes:
+      - ./config:/config:ro
+      - worker-b-data:/data
+    depends_on: [caddy]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      TACIT_DOMAIN: ${TACIT_DOMAIN:?Set TACIT_DOMAIN in deploy/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [relay]
+    networks:
+      default:
+        # Containers reach the public HTTPS name directly, without hairpin through the EC2 IP.
+        aliases: ["${TACIT_DOMAIN}"]
+
+volumes:
+  relay-data:
+  worker-a-data:
+  worker-b-data:
+  caddy-data:
+  caddy-config:

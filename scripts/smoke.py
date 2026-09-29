@@ -41,7 +41,9 @@ def run_worker(url, token, workspace, state_dir, live, backend, model):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live-model", action="store_true")
-    parser.add_argument("--backend", choices=["codex", "kiro", "opencode"], default="codex")
+    parser.add_argument(
+        "--backend", choices=["codex", "kiro", "opencode", "bedrock", "openai"], default="codex"
+    )
     parser.add_argument("--model")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]

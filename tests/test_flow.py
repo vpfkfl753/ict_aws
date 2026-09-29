@@ -479,3 +479,18 @@ def test_mixed_backends_complete_exchange(setup, tmp_path, monkeypatch, backends
     assert used == list(backends)
     assert store.latest(BOB, exchange["id"])["state"] == "completed"
     assert slack.messages == [exchange["text"]]
+
+
+def test_public_landing_page_shows_demo_links_without_member_details(setup, monkeypatch):
+    _, app, *_ = setup
+    monkeypatch.setenv("TACIT_DEMO_SLACK_URL", "https://demo.slack.com/?a=1&b=2")
+    monkeypatch.delenv("TACIT_REPO_URL", raising=False)
+    response = TestClient(app).get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    page = response.text
+    assert "Tacit" in page and "/tacit-send" in page and "protocol 2" in page
+    assert 'href="https://demo.slack.com/?a=1&amp;b=2"' in page
+    assert "소스 저장소" not in page
+    assert not any(value in page for value in [ALICE, BOB, *MEMBERS.values(), BRIDGE])
+    assert TestClient(app).get("/health").json() == {"status": "ok", "protocol": 2}
