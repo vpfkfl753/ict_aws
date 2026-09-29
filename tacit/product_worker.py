@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 from slack_sdk.errors import SlackApiError
 
-from tacit.presentation import draft_blocks, plain_blocks, readable_mentions
+from tacit.presentation import agent_badge, draft_blocks, plain_blocks, readable_mentions
 from tacit.provider import create_provider, prepare_prompt
 from tacit.retrieval import Researcher, object_response
 from tacit.worker import Worker
@@ -188,6 +188,7 @@ class ProductWorker(Worker):
                 )
             if item["actions"]:
                 blocks.append({"type": "actions", "elements": item["actions"]})
+            blocks.insert(0, agent_badge())
             # This user token posts directly to the original DM or the user's
             # conversation with Tacit. The central relay sees no unapproved preview text.
             try:

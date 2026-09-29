@@ -20,6 +20,20 @@ LABELS = {
     "user_answer": "답변을 받았어요",
 }
 
+# Slack keeps apps out of person-to-person DMs, so private notices there are posted
+# with the user's own token and show the user's name. This line marks them as Tacit's.
+TACIT_ICON = "https://raw.githubusercontent.com/vpfkfl753/ict_aws/main/docs/images/tacit-logo.png"
+
+
+def agent_badge():
+    return {
+        "type": "context",
+        "elements": [
+            {"type": "image", "image_url": TACIT_ICON, "alt_text": "Tacit"},
+            {"type": "mrkdwn", "text": "*Tacit 에이전트*"},
+        ],
+    }
+
 
 def readable_mentions(text):
     return re.sub(r"<@[UW][A-Z0-9]+(?:\|([^>\n]+))?>", lambda m: m.group(1) or "사용자", text)
