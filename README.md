@@ -95,7 +95,7 @@ A가 공유를 누르고 20~40초 뒤, 미리 열어둔 연구원 B 창에 결�
 - Python 3.12, `uv`로 의존성 고정
 - Slack Bolt(Socket Mode): 슬래시 명령, 버튼, 입력 창, "나에게만 표시" 메시지
 - FastAPI + SQLite 중계 서버, httpx 기반 worker
-- AI 추론: 대회 AI 게이트웨이(OpenAI 호환)를 거친 Amazon Bedrock Claude Opus 4.8. 설정만 바꾸면 Bedrock 직접 호출, Codex, Kiro, OpenCode로도 실행
+- AI 추론: 대회 AI 게이트웨이(OpenAI 호환)를 거친 Amazon Bedrock Claude Opus 4.8
 - 배포: AWS EC2의 Docker Compose, Caddy 자동 HTTPS
 
 테스트는 `uv run pytest`로 실행합니다(150개). 승인 전 미전송, 수정본 고정, 최대 2번 되묻기, 권한과 대화 유형 판별 같은 흐름을 모의 Slack과 모의 worker로 확인합니다.
