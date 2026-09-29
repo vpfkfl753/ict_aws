@@ -67,28 +67,9 @@ docker compose run --rm worker-a --env-file /config/worker-a.env doctor --probe
 
 `doctor --probe`는 실제 모델을 한 번 호출한다. 키로 부를 수 있는 별칭은 `GET /v1/models`로 확인한다. `TACIT_OPENAI_REASONING_EFFORT`는 요청의 `reasoning_effort`로 전달되며, 비워두면 모델 기본값을 쓴다. LiteLLM 게이트웨이는 Claude에서 이 값을 모델의 effort 설정으로 바꾼다. 사용액과 한도는 `GET /key/info`로 확인한다.
 
-## 대회 Kiro 구독으로 전환
-
-이미지에는 Kiro CLI 2.25.0(musl 빌드)이 들어 있다. 두 워커는 `kiro-auth` 볼륨에 저장된 Kiro 로그인 하나를 함께 쓴다. 서버에서 TTY가 있는 셸로 한 번 로그인한다.
-
-```bash
-docker compose run --rm --no-deps --entrypoint /app/.tools/kirocli/bin/kiro-cli worker-a \
-  login --license pro --identity-provider https://<portal>.awsapps.com/start \
-  --region <Identity Center 리전> --use-device-flow
-```
-
-Start URL과 리전 입력 칸은 미리 채워져 있으니 Enter로 넘긴다. 출력된 URL을 AWS access portal에 로그인된 브라우저에서 열고, 코드가 같은지 확인한 뒤 승인한다. 이어서 `worker-a.env`, `worker-b.env`를 바꾸고 워커를 재생성한다.
-
-```dotenv
-TACIT_BACKEND="kiro"
-TACIT_MODEL="claude-opus-5.5"
-```
-
-사용 가능한 모델과 크레딧 배수는 `kiro-cli chat --list-models`로 확인한다. 한 호출에 Kiro 세션을 새로 띄워 호출당 10~20초가 걸리고, 호출 중 워커당 메모리를 300MB가량 더 쓴다. 2GB 메모리 인스턴스에는 스왑을 둔다.
-
 ## 주의
 
 - `deploy/config/`와 `deploy/.env`는 Git에서 제외된다. API 키, Slack 토큰, 생성된 설정 파일을 커밋하거나 문서·채팅에 붙여넣지 않는다.
-- 테스트 계정이 Slack Home 설정에서 실행기를 `codex`, `opencode`로 바꾸면 컨테이너에 해당 CLI가 없어 실패한다. `kiro`는 위 로그인을 마친 경우에만 동작한다. 데모에서는 빈칸(서버 기본값)을 유지한다.
-- 중계 DB, 워커 상태, Kiro 로그인은 Docker 볼륨(`relay-data`, `worker-a-data`, `worker-b-data`, `kiro-auth`)에 남는다. `docker compose down -v`는 기록, 인증서, Kiro 로그인을 모두 삭제한다.
+- 테스트 계정이 Slack Home 설정에서 실행기를 `codex`, `kiro`, `opencode`로 바꾸면 컨테이너에 해당 CLI가 없어 실패한다. 데모에서는 빈칸(서버 기본값)을 유지한다.
+- 중계 DB와 워커 상태는 Docker 볼륨(`relay-data`, `worker-a-data`, `worker-b-data`)에 남는다. `docker compose down -v`는 기록과 인증서를 모두 삭제한다.
 - 데모가 끝나면 EC2 인스턴스를 종료하고 과금 여부를 확인한다.
