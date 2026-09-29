@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<title>Tacit 클라우드 데모 아키텍처</title>
+<style>
+  @page { size:1600px 1020px; margin:0; }
+  html { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  :root { --bg:#f6f5fa; --card:#fff; --line:#e2dfeb; --ink:#1f1d2b; --muted:#6b6880;
+          --accent:#5b3fa0; --accent-soft:#efeaf9; --aws:#e9922e; --aws-soft:#fff8ef;
+          --docker:#2f7fc1; --docker-soft:#eef5fc; --green:#2f8f5b; --green-soft:#e9f6ef; }
+  * { box-sizing:border-box; margin:0; }
+  body { width:1600px; height:1020px; background:var(--bg); color:var(--ink);
+         font-family:"Noto Sans KR","Noto Sans CJK KR",system-ui,sans-serif; position:relative; overflow:hidden; }
+  h1 { position:absolute; left:32px; top:26px; font-size:34px; font-weight:800; letter-spacing:-0.5px; }
+  .sub { position:absolute; left:34px; top:76px; font-size:17px; color:var(--muted); }
+  .card { position:absolute; background:var(--card); border:1.5px solid var(--line); border-radius:16px;
+          padding:14px 16px; box-shadow:0 2px 8px rgba(40,30,80,.05); }
+  .t { font-size:18px; font-weight:800; }
+  .d { font-size:13.5px; color:var(--muted); margin-top:5px; line-height:1.55; }
+  .d b { color:var(--ink); }
+  .tag { display:inline-block; font-size:11.5px; font-weight:700; padding:2px 8px; border-radius:999px;
+         background:var(--accent-soft); color:var(--accent); margin-bottom:6px; }
+  .chip { display:inline-block; font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:6px;
+          background:#f1f0f6; color:#55526a; border:1px solid #e3e1ec; margin:3px 4px 0 0; }
+  .chip.vol::before { content:"▣ "; color:var(--docker); }
+  .chip.dir::before { content:"▤ "; color:#8a7a3a; }
+  /* zones */
+  .aws { position:absolute; left:30px; top:370px; width:1540px; height:440px; border:2px dashed var(--aws);
+         border-radius:22px; background:var(--aws-soft); }
+  .aws-tab { position:absolute; left:162px; top:381px; font-size:15px; font-weight:800; color:#b86a12; }
+  .aws-foot { position:absolute; left:52px; top:780px; font-size:13px; color:#9a6a33; }
+  .compose { position:absolute; left:50px; top:425px; width:1500px; height:341px; border:2px solid #b9d3ec;
+             border-radius:18px; background:var(--docker-soft); }
+  .compose-tab { position:absolute; left:162px; top:436px; font-size:14px; font-weight:800; color:var(--docker); }
+  .compose-tab span { font-weight:500; color:#4f7fa8; }
+  .ctr { border-top:5px solid var(--docker); }
+  .ctr.core { border-top-color:var(--accent); }
+  .ctr .kind { position:absolute; right:12px; top:12px; font-size:11px; font-weight:700; color:var(--docker); }
+  .strip { position:absolute; left:70px; top:675px; width:1460px; height:76px; background:#fffdf5;
+           border:1.5px dashed #d8c58a; border-radius:12px; padding:10px 16px; }
+  .strip .t { font-size:15px; color:#7a6420; }
+  /* external */
+  .slack .bar { margin:-14px -16px 10px; padding:10px 16px; border-radius:15px 15px 0 0;
+                background:#4a154b; color:#fff; font-weight:800; font-size:15px; }
+  .row { display:flex; align-items:center; gap:14px; }
+  .person { display:flex; align-items:center; gap:9px; background:#f7f5fb; border-radius:12px;
+            padding:9px 12px; font-size:15px; font-weight:700; }
+  .person small { font-weight:500; color:var(--muted); font-size:12.5px; }
+  .dot { width:28px; height:28px; border-radius:8px; display:grid; place-items:center; color:#fff; font-size:13px; }
+  .dm { font-size:12.5px; color:var(--muted); text-align:center; line-height:1.3; }
+  .gw { border:2px solid var(--accent); }
+  .model { background:var(--accent); color:#fff; border:none; }
+  .model .d { color:#e3dbf7; }
+  .model .d b { color:#fff; }
+  /* bottom */
+  .flow li, .rules li { font-size:13.5px; line-height:1.5; list-style:none; position:relative; }
+  .flow ol { padding:0; margin-top:8px; display:grid; grid-template-columns:1fr 1fr; gap:8px 26px; }
+  .flow li { padding-left:28px; }
+  .flow li .n, .num { display:inline-grid; place-items:center; width:19px; height:19px; border-radius:50%;
+         background:var(--accent); color:#fff; font-size:11px; font-weight:700; }
+  .flow li .n { position:absolute; left:0; top:1px; }
+  .rules { background:var(--green-soft); border-color:#cfe8da; }
+  .rules ul { padding:0; margin-top:6px; }
+  .rules li { padding-left:24px; margin-top:6px; }
+  .rules li b { color:var(--green); }
+  .rules li::before { content:"✓"; position:absolute; left:0; top:2px; width:17px; height:17px; border-radius:50%;
+                      background:var(--green); color:#fff; font-size:10px; display:grid; place-items:center; }
+  .lbl { position:absolute; font-size:12.5px; font-weight:700; color:var(--accent); background:var(--bg);
+         padding:1px 6px; border-radius:6px; white-space:nowrap; line-height:1.45; }
+  .lbl.in-aws { background:var(--aws-soft); }
+  .lbl.in-dk { background:var(--docker-soft); }
+  .lbl .num { width:17px; height:17px; font-size:10.5px; margin-right:3px; vertical-align:-3px; }
+  .lbl small { font-weight:500; color:var(--muted); font-size:11.5px; }
+  svg { position:absolute; left:0; top:0; }
+</style></head><body>
+<h1>Tacit 클라우드 데모 아키텍처</h1>
+<div class="sub">심사위원은 설치 없이 Slack에서 체험합니다. EC2 한 대의 컨테이너 5개가 중계와 두 사람의 에이전트를 맡고, 추론은 대회 AI 게이트웨이를 거쳐 Claude가 합니다.</div>
+
+<!-- top row: people and external services -->
+<div class="card" style="left:30px; top:140px; width:220px; height:150px;">
+  <div class="t">심사위원 브라우저</div>
+  <div class="d">테스트 계정 두 개로<br>A, B 창을 나란히 엽니다.</div>
+</div>
+
+<div class="card slack" style="left:290px; top:140px; width:720px; height:150px;">
+  <div class="bar">Slack · tacitdemo 워크스페이스 <span style="font-weight:500;opacity:.8">(Slack 클라우드)</span></div>
+  <div class="row">
+    <div class="person"><div class="dot" style="background:#7b61c4">A</div>연구팀장 A <small>보내는 사람</small></div>
+    <div class="dm">⇄<br>사람 사이의<br>일반 DM</div>
+    <div class="person"><div class="dot" style="background:#3f9bd6">B</div>연구원 B <small>받는 사람</small></div>
+  </div>
+  <div class="d" style="margin-top:8px">Tacit 안내(승인, 확인 질문, 설명)는 DM 안에 <b>나에게만 표시</b>로 보입니다.</div>
+</div>
+
+<div class="card gw" style="left:1045px; top:140px; width:245px; height:150px;">
+  <span class="tag">대회 제공</span>
+  <div class="t" style="font-size:16.5px">NxtCloud AI 게이트웨이</div>
+</div>
+<div class="card model" style="left:1325px; top:140px; width:245px; height:150px;">
+  <div class="t">Amazon Bedrock</div>
+  <div class="d" style="margin-top:8px"><b style="font-size:17px">Claude Opus 4.8</b><br>effort high</div>
+</div>
+
+<!-- AWS / EC2 -->
+<div class="aws"></div>
+<div class="aws-tab">AWS 서울 리전 · EC2 t4g.small</div>
+<div class="aws-foot">보안 그룹: 80/443만 공개 · 데모 자료는 합성 데이터</div>
+
+<div class="compose"></div>
+<div class="compose-tab">Docker Compose · 프로젝트 tacit <span>· 네트워크 tacit_default</span></div>
+
+<div class="card ctr" style="left:70px; top:480px; width:260px; height:150px;">
+    <div class="t">caddy</div>
+  <div class="d">HTTPS 인증서 자동 발급<br>랜딩 페이지와 relay 프록시</div>
+  <div><span class="chip vol">caddy-data</span><span class="chip vol">caddy-config</span></div>
+</div>
+
+<div class="card ctr core" style="left:370px; top:480px; width:260px; height:150px;">
+    <div class="t">relay · 중계 서버</div>
+  <div class="d">FastAPI + SQLite<br>작업 등록, 상태 관리, 배정</div>
+  <div style="margin-top:4px"><span class="chip vol">relay-data (SQLite)</span></div>
+</div>
+
+<div class="card ctr core" style="left:670px; top:480px; width:260px; height:150px;">
+    <div class="t">slack · 커넥터</div>
+  <div class="d">Socket Mode로 Slack 연결<br>명령, 버튼, 입력 창 처리<br>알림 전달</div>
+</div>
+
+<div class="card ctr core" style="left:970px; top:480px; width:260px; height:150px;">
+    <div class="t">worker-a <span style="font-size:13px;font-weight:600;color:var(--docker)">A 전용 컨테이너</span></div>
+  <div class="d">원문 DM을 A 이름으로 전송<br>배경 초안 작성, A 승인 대기</div>
+  <div style="margin-top:2px"><span class="chip dir">자료 workspaces/a</span><span class="chip vol">worker-a-data</span></div>
+</div>
+
+<div class="card ctr core" style="left:1270px; top:480px; width:260px; height:150px;">
+    <div class="t">worker-b <span style="font-size:13px;font-weight:600;color:var(--docker)">B 전용 컨테이너</span></div>
+  <div class="d">받은 맥락을 B의 자료와 비교<br>확인 질문 또는 맞춤 설명</div>
+  <div style="margin-top:2px"><span class="chip dir">자료 workspaces/b</span><span class="chip vol">worker-b-data</span></div>
+</div>
+
+<div class="strip">
+  <div class="t">설정 파일 · 호스트 ./config → 컨테이너 /config <span style="font-weight:500;font-size:13px;color:#8a7a3a">(읽기 전용 · 레포에 없음)</span></div>
+  <div style="margin-top:8px">
+    <span class="chip">relay.env · 에이전트 토큰 목록</span>
+    <span class="chip">slack.env · 봇 토큰, 앱 토큰</span>
+    <span class="chip">worker-a.env · A 사용자 토큰, 게이트웨이 키</span>
+    <span class="chip">worker-b.env · B 사용자 토큰, 게이트웨이 키</span>
+  </div>
+</div>
+
+<!-- bottom row -->
+<div class="card flow" style="left:30px; top:835px; width:1040px; height:165px;">
+  <div class="t">요청 흐름</div>
+  <ol>
+    <li><span class="n">1</span>A가 DM에서 <b>/tacit-send</b>를 보내면 Slack이 커넥터로 전달합니다.</li>
+    <li><span class="n">4</span>worker는 <b>게이트웨이 → Claude Opus 4.8</b>로 초안과 해석을 요청합니다.</li>
+    <li><span class="n">2</span>커넥터가 relay에 작업을 등록합니다.</li>
+    <li><span class="n">5</span>A가 <b>공유</b>를 누르면 승인한 맥락만 relay를 거쳐 worker-b로 갑니다.</li>
+    <li><span class="n">3</span>worker-a가 원문 DM을 A 이름으로 보내고, 배경 초안을 A에게만 보여줍니다.</li>
+    <li><span class="n">6</span>worker-b가 B의 자료와 비교해 B에게만 보이는 설명이나 확인 질문을 올립니다.</li>
+  </ol>
+</div>
+<div class="card rules" style="left:1090px; top:835px; width:480px; height:165px;">
+  <div class="t" style="color:var(--green)">데이터 원칙</div>
+  <ul>
+    <li>각 worker는 <b>자기 사용자 자료</b>와 그 DM방 기록만 읽습니다.</li>
+    <li>승인 전 초안은 worker 볼륨에만, relay에는 <b>해시값만</b> 갑니다.</li>
+    <li>되묻는 질문에는 <b>원문과 이미 공유한 내용만</b> 들어갑니다.</li>
+    <li>API 키와 토큰은 <b>서버 설정 파일에만</b> 있습니다.</li>
+  </ul>
+</div>
+
+<!-- arrows -->
+<svg width="1600" height="1020">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b3fa0"/></marker>
+  </defs>
+  <g stroke="#5b3fa0" stroke-width="2.2" fill="none" stroke-linejoin="round">
+    <path d="M250,215 L286,215" marker-end="url(#a)"/>
+    <path d="M140,290 L140,476" marker-end="url(#a)"/>
+    <path d="M800,294 L800,476" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path d="M975,466 L975,454 L1525,454 L1525,466" stroke-width="1.8"/>
+    <path d="M1000,454 L1000,294" marker-end="url(#a)"/>
+    <path d="M1150,454 L1150,294" marker-end="url(#a)" marker-start="url(#a)"/>
+    <path d="M1290,215 L1321,215" marker-end="url(#a)" marker-start="url(#a)"/>
+    <path d="M330,545 L366,545" marker-end="url(#a)"/>
+    <path d="M670,585 L634,585" marker-end="url(#a)"/>
+    <path d="M500,634 L500,652 L1400,652 L1400,634" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path d="M1100,652 L1100,634" marker-end="url(#a)"/>
+  </g>
+</svg>
+<div class="lbl" style="left:246px; top:186px;">로그인</div>
+<div class="lbl" style="left:148px; top:320px;">랜딩 페이지</div>
+<div class="lbl in-aws" style="left:808px; top:326px;"><span class="num">1</span>명령 · 버튼 <small>Socket Mode</small></div>
+<div class="lbl in-aws" style="left:810px; top:392px;"><span class="num">3</span><span class="num">6</span>Slack API</div>
+<div class="lbl" style="left:1158px; top:330px;"><span class="num">4</span>추론 요청</div>
+<div class="lbl in-dk" style="left:328px; top:520px; padding:1px 3px;">프록시</div>
+<div class="lbl in-dk" style="left:638px; top:558px; padding:1px 3px;"><span class="num" style="margin:0">2</span></div>
+<div class="lbl in-dk" style="left:700px; top:642px;"><span class="num">3</span><span class="num">5</span>작업 배정 · 승인한 맥락</div>
+</body></html>
