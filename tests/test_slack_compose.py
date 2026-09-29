@@ -48,7 +48,7 @@ def submission(text="hello", recipient="UB", team="T1"):
 def test_bare_or_unresolved_command_opens_modal_without_dispatching():
     app, slack = App(), Slack()
     register_handlers(app, None, "T1")
-    for text in ("", "@사용자 B 안녕", "이번 결과 비교했어?"):
+    for text in ("", "@상대 안녕", "이번 결과 비교했어?"):
         acknowledgements = []
         app.handlers["/tacit-send"](
             ack=lambda: acknowledgements.append(True),

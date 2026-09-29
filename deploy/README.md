@@ -32,7 +32,7 @@ cp deploy/.env.example deploy/.env   # TACIT_DOMAIN을 같은 이름으로 수�
 | `worker-a.env` | 테스트 계정 A의 `SLACK_USER_TOKEN`(xoxp) |
 | `worker-b.env` | 테스트 계정 B의 `SLACK_USER_TOKEN`(xoxp) |
 
-Slack 앱 생성과 토큰 발급 절차는 [첫 연결 가이드](../docs/FIRST_CONTACT.md)와 같다. 각 사용자 토큰은 해당 테스트 계정으로 앱을 설치해 발급한다.
+Slack 앱은 저장소의 `slack-manifest.json`으로 만든다. 각 사용자 토큰은 해당 테스트 계정으로 앱을 설치해 발급한다.
 
 ## 실행과 확인
 
