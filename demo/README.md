@@ -29,4 +29,3 @@ TACIT_WORKSPACE=/absolute/path/to/demo/01_experiment_baseline/recipient
 조건을 사용한다. 나머지 두 시나리오는 상대 worker의 자료 폴더까지 맞춘 뒤 같은 방식으로
 실행한다.
 
-첫 실제 실행에서 확인한 범위와 남은 확인은 [실험 기록](ACTUAL_EXPERIMENT.md)에 정리했다.
