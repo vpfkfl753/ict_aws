@@ -4,11 +4,13 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
 
 import httpx
+from slack_sdk.errors import SlackApiError
 
 from tacit.presentation import draft_blocks, plain_blocks, readable_mentions
 from tacit.provider import create_provider, prepare_prompt
@@ -101,7 +103,15 @@ class ProductWorker(Worker):
         self.settings = settings
 
     def local_notice(
-        self, task, text, actions=None, key="notice", required_state=None, version=None
+        self,
+        task,
+        text,
+        actions=None,
+        key="notice",
+        required_state=None,
+        version=None,
+        waiting=(),
+        title="",
     ):
         name = f"{task['id']}-{key}-outbox.json"
         if (self.state_dir / name).exists():
@@ -116,6 +126,8 @@ class ProductWorker(Worker):
                 "client_id": str(uuid.uuid4()),
                 "required_state": required_state,
                 "version": version,
+                "waiting": list(waiting),
+                "title": title,
             },
         )
 
@@ -125,13 +137,16 @@ class ProductWorker(Worker):
             item = json.loads(path.read_text())
             if item["sent"]:
                 continue
-            if not item.get("actions"):
+            if not item.get("actions") and not item.get("required_state"):
                 item["sent"] = True
                 self.save_private(path.name, item)
                 continue
             current = self.relay.request("GET", f"/v2/work/{item['task']}")
             if item.get("required_state"):
-                if current["version"] < item["version"]:
+                if current["version"] < item["version"] or (
+                    current["version"] == item["version"]
+                    and current["state"] in item.get("waiting", [])
+                ):
                     self.notices_waiting = True
                     continue
                 if (
@@ -141,22 +156,26 @@ class ProductWorker(Worker):
                     item["sent"] = True
                     self.save_private(path.name, item)
                     continue
-            thread = current.get("delivery", {}).get(self.owner, {}).get("thread")
-            if not thread:
-                # Only the bridge creates the single main card. Keep local
-                # previews private and retry until that parent is registered.
-                self.notices_waiting = True
-                continue
-            channel = thread["channel"]
-            if (
-                current["mode"] == "dm"
-                and current["sender"] == self.owner
-                and current.get("source")
-            ):
-                # The sender reviews context privately where they sent the DM.
+            in_dm = (
+                current["mode"] == "dm" and current.get("source") and item.get("place") != "thread"
+            )
+            if in_dm:
+                # Both people see their own Tacit steps privately in the original DM.
                 channel = current["source"]["channel"]
+            else:
+                thread = current.get("delivery", {}).get(self.owner, {}).get("thread")
+                if not thread:
+                    # Only the bridge creates the single main card. Keep local
+                    # previews private and retry until that parent is registered.
+                    self.notices_waiting = True
+                    continue
+                channel = thread["channel"]
             blocks = plain_blocks(item["text"])
-            if item.get("version") and item.get("required_state"):
+            if item.get("title"):
+                blocks.insert(
+                    0, {"type": "header", "text": {"type": "plain_text", "text": item["title"]}}
+                )
+            if item.get("required_state") in {"approval_wait", "user_wait"}:
                 preview = item["text"]
                 draft_path = self.state_dir / f"{item['task']}-draft-{item['version']}.json"
                 if item["required_state"] == "approval_wait" and draft_path.exists():
@@ -169,21 +188,86 @@ class ProductWorker(Worker):
                 )
             if item["actions"]:
                 blocks.append({"type": "actions", "elements": item["actions"]})
-            # This user token posts directly to the user's conversation with Tacit.
-            # The central relay sees no unapproved preview text.
-            result = self.sender.client.chat_postEphemeral(
-                channel=channel,
-                user=self.owner,
-                as_user=False,
-                username="Tacit",
-                text="공유할 내용을 확인해주세요" if item.get("actions") else "작업 상세 기록",
-                blocks=blocks,
-            )
+            # This user token posts directly to the original DM or the user's
+            # conversation with Tacit. The central relay sees no unapproved preview text.
+            try:
+                result = self.sender.client.chat_postEphemeral(
+                    channel=channel,
+                    user=self.owner,
+                    # Slack rejects as_user=False with user tokens (invalid_arguments).
+                    username="Tacit",
+                    text=item.get("title")
+                    or {
+                        "user_wait": "확인 질문에 답해주세요",
+                        "completed": "설명이 준비됐어요",
+                    }.get(item.get("required_state"), "공유할 내용을 확인해주세요"),
+                    blocks=blocks,
+                )
+            except SlackApiError as exc:
+                if not in_dm:
+                    raise
+                # A DM that rejects private notices falls back to the Tacit conversation.
+                log.warning("DM notice rejected (%s); using Tacit card", exc.response.get("error"))
+                item["place"] = "thread"
+                self.save_private(path.name, item)
+                self.notices_waiting = True
+                continue
             item.update(sent=True, ts=result.get("message_ts"), channel=channel)
             self.save_private(path.name, item)
 
+    def dm_history(self, task):
+        # The same DM, read with this user's own token, stays local evidence.
+        source = task.get("source")
+        if task["mode"] != "dm" or not source or not self.settings.get("history", True):
+            return []
+        peer = task["recipient"] if task["sender"] == self.owner else task["sender"]
+        names = {self.owner: "나", peer: "상대"}
+        try:
+            messages = self.sender.client.conversations_history(
+                channel=source["channel"],
+                latest=source["ts"],
+                oldest=f"{time.time() - 14 * 86400:.6f}",
+                limit=50,
+            )["messages"]
+        except Exception:
+            self.audit(task, "history_failed", {})
+            return []
+        lines, size, truncated = [], 0, False
+        for message in messages:
+            if (
+                message.get("ts") == source["ts"]
+                or message.get("subtype")
+                or message.get("bot_id")
+                or message.get("user") not in names
+                or not isinstance(message.get("text"), str)
+            ):
+                continue
+            text = message["text"]
+            for user, name in names.items():
+                text = re.sub(rf"<@{user}(?:\|[^>\n]*)?>", name, text)
+            text = readable_mentions(text).strip()[:1000]
+            if not text:
+                continue
+            line = f"{names[message['user']]}: {text}"
+            if len(lines) == 30 or size + len(line) > 6000:
+                truncated = True
+                break
+            lines.append(line)
+            size += len(line) + 1
+        self.audit(task, "history", {"count": len(lines)})
+        if not lines:
+            return []
+        return [
+            {
+                "path": "slack:dm-history",
+                "content": "원문 이전 DM 대화, 오래된 순. 나=이 Agent의 사용자, 상대=대화 상대.\n"
+                + "\n".join(reversed(lines)),
+                "truncated": truncated,
+            }
+        ]
+
     def collect(self, task, message):
-        return Researcher(
+        return self.dm_history(task) + Researcher(
             self.provider,
             self.provider.workspace,
             lambda kind, detail: self.audit(task, kind, detail),
@@ -220,6 +304,15 @@ class ProductWorker(Worker):
                 ("공유 안 함", "tacit_cancel"),
             )
         ]
+        # Ephemeral interactions omit the message, so the editor is filled from
+        # the clicked button. Slack already shows this preview; the relay never sees it.
+        edit = json.dumps(
+            {"id": task["id"], "version": version, "text": draft},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(edit) <= 2000:
+            actions[1]["value"] = edit
         self.local_notice(
             task,
             text,
@@ -337,11 +430,31 @@ class ProductWorker(Worker):
                     "ask_user",
                     "메시지를 해석하는 데 필요한 정보가 부족합니다. 내 쪽 조건이나 의도를 알려주세요.",
                 )
+            elif t["mode"] == "agent":
+                self.approval(t, text[:2500])
             else:
-                if t["mode"] == "agent":
-                    self.approval(t, text[:2500])
-                else:
-                    self.update(t, "result", text[:2500])
+                if t.get("source"):
+                    auto = self.settings.get("auto_receive", True)
+                    self.local_notice(
+                        t,
+                        text[:2500] if auto else "설명이 준비됐어요.",
+                        None
+                        if auto
+                        else [
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "보기"},
+                                "action_id": "tacit_result",
+                                "value": t["id"],
+                            }
+                        ],
+                        key="result",
+                        required_state="completed",
+                        version=t["version"],
+                        waiting=("interpret_pending", "interpret_running"),
+                        title="나를 위한 설명" if auto else "",
+                    )
+                self.update(t, "result", text[:2500])
 
     def once(self):
         self.flush_notices()
@@ -364,7 +477,8 @@ class ProductWorker(Worker):
                     original = self.state_dir / f"{t['id']}-{key}-{t['version']}-outbox.json"
                     if original.exists():
                         notice = json.loads(original.read_text())
-                        notice.update(sent=False)
+                        # A re-requested preview appears where the card was clicked.
+                        notice.update(sent=False, place="thread")
                         self.save_private(f"{t['id']}-preview-{request['id']}-outbox.json", notice)
                 self.flush_notices()
             # Audit records stay local; no detailed logs are sent to Slack.
