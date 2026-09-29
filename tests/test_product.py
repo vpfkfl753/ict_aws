@@ -1221,6 +1221,7 @@ HISTORY = [
     {"ts": "0.9", "user": "UB", "text": "<@UA> 어제 B17 결과 봤어?"},
     {"ts": "0.8", "bot_id": "B1", "user": "UBOT", "text": "BOT NOISE"},
     {"ts": "0.7", "subtype": "channel_join", "user": "UB", "text": "JOINED"},
+    {"ts": "0.65", "bot_id": "B1", "user": "UB", "text": "Tacit으로 보낸 원문"},
     {"ts": "0.6", "user": "UA", "text": "p2 전처리로 다시 돌렸어 <@UC|철수>"},
     {"ts": "0.5", "user": "UC", "text": "OUTSIDER"},
 ]
@@ -1240,7 +1241,11 @@ def test_dm_history_is_local_evidence_for_sender_and_recipient(system, tmp_path,
     [sender] = {s["content"]: s for s in history_sources(model)}.values()
     assert slack.reads[0]["channel"] == "D1" and slack.reads[0]["latest"] == "1"
     lines = sender["content"].splitlines()[1:]
-    assert lines == ["나: p2 전처리로 다시 돌렸어 철수", "상대: 나 어제 B17 결과 봤어?"]
+    assert lines == [
+        "나: p2 전처리로 다시 돌렸어 철수",
+        "상대: Tacit으로 보낸 원문",
+        "상대: 나 어제 B17 결과 봤어?",
+    ]
     for noise in ("CURRENT", "BOT", "JOINED", "OUTSIDER", "<@"):
         assert noise not in sender["content"]
     bridge.request(
@@ -1254,12 +1259,13 @@ def test_dm_history_is_local_evidence_for_sender_and_recipient(system, tmp_path,
     [recipient] = {s["content"]: s for s in history_sources(model)}.values()
     assert recipient["content"].splitlines()[1:] == [
         "상대: p2 전처리로 다시 돌렸어 철수",
+        "나: Tacit으로 보낸 원문",
         "나: 상대 어제 B17 결과 봤어?",
     ]
     with store.db() as db:
         assert "B17 결과" not in db.execute("SELECT body FROM workflows").fetchone()[0]
     audit = (tmp_path / "UB" / f"{task['id']}-audit.jsonl").read_text()
-    assert '"kind": "history", "count": 2' in audit
+    assert '"kind": "history", "count": 3' in audit
 
 
 def test_dm_history_is_capped_and_skipped_for_agent_mode(system, tmp_path, monkeypatch):
