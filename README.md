@@ -1,3 +1,5 @@
+<img src="docs/images/tacit-logo.png" width="88" alt="Tacit 로고">
+
 # Tacit
 
 Slack DM에서 사람이 말하지 않은 배경을 각자의 AI 에이전트가 찾아 이어주는 B2B 협업 도구입니다.

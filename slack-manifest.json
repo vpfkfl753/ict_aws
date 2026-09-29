@@ -2,7 +2,7 @@
   "display_information": {
     "name": "Tacit",
     "description": "Local agents exchange context for your conversations",
-    "background_color": "#246b57"
+    "background_color": "#1d1d1f"
   },
   "features": {
     "bot_user": {"display_name": "Tacit", "always_online": false},
