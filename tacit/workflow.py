@@ -12,10 +12,12 @@ DEFAULT_SETTINGS = {
     "backend": "",
     "model": "",
     "web": False,
+    "history": True,
     "auto_receive": True,
     "auto_send": False,
     "auto_share": False,
 }
+BACKENDS = {"", "kiro", "codex", "opencode", "bedrock", "openai"}
 
 
 class Workflow:
@@ -43,11 +45,11 @@ class Workflow:
             if value is not None:
                 if set(value) - set(DEFAULT_SETTINGS):
                     raise Conflict("Unknown preference")
-                if value.get("backend", "") not in {"", "kiro", "codex", "opencode"}:
+                if value.get("backend", "") not in BACKENDS:
                     raise Conflict("Unknown backend")
                 if any(
                     not isinstance(value.get(k, False), bool)
-                    for k in ("web", "auto_send", "auto_receive", "auto_share")
+                    for k in ("web", "history", "auto_send", "auto_receive", "auto_share")
                 ):
                     raise Conflict("Boolean preference required")
                 if any(

@@ -1,11 +1,13 @@
 import asyncio
 import hmac
+import html
 import json
 import os
 import time
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -23,6 +25,64 @@ class Update(BaseModel):
     lease: str
     action: Literal["source", "context", "result", "error"]
     value: str | dict[str, str]
+
+
+LANDING = """<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tacit</title>
+<style>
+:root { color-scheme: light dark; --bg: #f7f7f5; --fg: #1d1d1f; --muted: #5f6368;
+  --card: #ffffff; --line: #e2e2de; --accent: #2f5bd3; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151618; --fg: #ececec; --muted: #a0a4ab; --card: #1f2023;
+    --line: #34363b; --accent: #8fb0ff; }
+}
+body { margin: 0; background: var(--bg); color: var(--fg); line-height: 1.6;
+  font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+main { max-width: 640px; margin: 0 auto; padding: 40px 16px; }
+h1 { margin: 0 0 8px; font-size: 2rem; }
+h2 { font-size: 1.1rem; margin: 32px 0 12px; }
+p { margin: 0; color: var(--muted); }
+ol { margin: 0; padding: 16px 16px 16px 36px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 12px; }
+li + li { margin-top: 8px; }
+code { font-size: 0.95em; padding: 1px 4px; border-radius: 4px; background: var(--line); }
+nav { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+a { color: var(--accent); }
+footer { margin-top: 32px; font-size: 0.9rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<h1>Tacit</h1>
+<p>팀에 흩어진 암묵지를 Slack DM 대화에 연결하는 B2B 협업 에이전트입니다.</p>
+<h2>체험 방법</h2>
+<ol>
+<li>서비스 소개서의 테스트 계정으로 데모 Slack 워크스페이스에 로그인합니다.</li>
+<li>상대 테스트 계정과의 DM에서 <code>/tacit-send @상대 메시지</code>를 실행합니다.</li>
+<li>Tacit이 보낸 사람에게 공유 승인을 받고, 받는 사람에게 맞춤 설명을 보여줍니다.</li>
+</ol>
+{links}
+<footer>서버 정상 · protocol 2</footer>
+</main>
+</body>
+</html>
+"""
+
+
+def landing_page():
+    links = [
+        f'<a href="{html.escape(url)}">{label}</a>'
+        for name, label in (
+            ("TACIT_DEMO_SLACK_URL", "데모 Slack 워크스페이스"),
+            ("TACIT_REPO_URL", "소스 저장소"),
+        )
+        if (url := os.environ.get(name, "").strip())
+    ]
+    return LANDING.replace("{links}", f"<nav>{''.join(links)}</nav>" if links else "")
 
 
 def create_app(store=None, members=None, bridge_token=None):
@@ -55,6 +115,10 @@ def create_app(store=None, members=None, bridge_token=None):
         if actor == "bridge":
             raise HTTPException(403, "Agent credentials required")
         return actor
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def landing():
+        return landing_page()
 
     @app.get("/health")
     def health():
