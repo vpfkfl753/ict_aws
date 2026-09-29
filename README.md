@@ -86,25 +86,14 @@ A가 공유를 누르고 20~40초 뒤, 미리 열어둔 연구원 B 창에 결�
 - 받는 쪽 에이전트가 상대에게 되묻는 질문에는 원래 메시지와 이미 공유된 내용만 들어갑니다. 받는 사람의 자료 내용은 질문에 넣지 않습니다.
 - 사람 사이의 원래 DM은 그대로 두고, Tacit의 안내는 해당 사용자에게만 보입니다.
 
-## 구성
+## 아키텍처
 
-```
-Slack 데모 워크스페이스
-      │  Socket Mode
-┌─────┴──────────────── AWS EC2 (서울) ─────────────────┐
-│  Slack 커넥터 ── relay(중계, 상태 저장) ── Caddy(HTTPS)   │
-│                     │                                 │
-│          worker A ──┴── worker B                      │
-│      (A의 자료만 읽음)   (B의 자료만 읽음)                  │
-└──────────────┬────────────────────────────────────────┘
-               │ 인스턴스 역할(키 파일 없음)
-          Amazon Bedrock
-```
+<img src="docs/images/tacit-architecture.png" width="900" alt="Tacit 클라우드 데모 아키텍처">
 
 데모 서버는 심사용으로 두 사람의 worker를 한 서버에서 돌립니다. 실제 팀에 도입할 때는 worker를 각자의 PC에서 실행하고, 자기 자료 폴더와 개인 구독(Codex, Kiro, OpenCode)을 씁니다.
 
 ## 더 보기
 
-- [데모 서버 배포 방법](deploy/README.md)
+- [데모 서버 배포 방법](deploy/README.md), [아키텍처 그림 PDF](docs/images/tacit-architecture.pdf)
 - [직접 설치·개발 안내](docs/DEVELOPER_GUIDE.md)
 - [v2 작업 흐름](docs/WORKFLOW_V2.md), [프로토콜](docs/PROTOCOL.md)
